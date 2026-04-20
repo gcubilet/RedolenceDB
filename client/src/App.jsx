@@ -2,18 +2,20 @@ import { useEffect } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, useNavigate } from 'react-router-dom'
 import { useAuthStore, initAuth } from './store/useAuthStore'
 import { supabase } from './lib/supabase'
-import NavBar from './components/layout/NavBar'
-import LoginRegister from './pages/LoginRegister'
-import OnboardingQuiz from './pages/OnboardingQuiz'
-import Catalogue from './pages/Catalogue'
-import PerfumeDetail from './pages/PerfumeDetail'
-import MyCollection from './pages/MyCollection'
-import Profile from './pages/Profile'
-import Recommendations from './pages/Recommendations'
-import AdminDashboard from './pages/AdminDashboard'
-import QueryConsole from './pages/QueryConsole'
 
-// Spins up once, wires auth into the store
+import NavBar          from './components/layout/NavBar'
+import LoginRegister   from './pages/LoginRegister'
+import OnboardingQuiz  from './pages/OnboardingQuiz'
+import Catalogue       from './pages/Catalogue'
+import PerfumeDetail   from './pages/PerfumeDetail'
+import BrandPage       from './pages/BrandPage'
+import MyCollection    from './pages/MyCollection'
+import Wishlist        from './pages/Wishlist'
+import Profile         from './pages/Profile'
+import Recommendations from './pages/Recommendations'
+import AdminDashboard  from './pages/AdminDashboard'
+import QueryConsole    from './pages/QueryConsole'
+
 function AuthInit() {
   const { setSession, setProfile, user } = useAuthStore()
   const navigate = useNavigate()
@@ -22,7 +24,6 @@ function AuthInit() {
     initAuth(setSession, setProfile)
   }, [])
 
-  // Redirect to quiz if user has never completed it
   useEffect(() => {
     if (!user) return
     supabase
@@ -38,19 +39,17 @@ function AuthInit() {
   return null
 }
 
-// Wraps any route that requires login
 function RequireAuth({ children }) {
   const { user, loading } = useAuthStore()
   if (loading) return null
   return user ? children : <Navigate to="/login" replace />
 }
 
-// Wraps admin-only routes — checks client-side; RLS handles server-side
 function RequireAdmin({ children }) {
   const { user, loading } = useAuthStore()
   if (loading) return null
   if (!user) return <Navigate to="/login" replace />
-  return children   // AdminDashboard does its own admin check internally
+  return children
 }
 
 export default function App() {
@@ -59,25 +58,22 @@ export default function App() {
       <AuthInit />
       <NavBar />
       <Routes>
-        {/* Public */}
-        <Route path="/"             element={<Catalogue />} />
-        <Route path="/perfume/:id"  element={<PerfumeDetail />} />
-        <Route path="/login"        element={<LoginRegister />} />
+        <Route path="/"            element={<Catalogue />} />
+        <Route path="/perfume/:id" element={<PerfumeDetail />} />
+        <Route path="/brand/:id"   element={<BrandPage />} />
+        <Route path="/login"       element={<LoginRegister />} />
 
-        {/* Auth required */}
         <Route path="/onboarding"      element={<RequireAuth><OnboardingQuiz /></RequireAuth>} />
         <Route path="/recommendations" element={<RequireAuth><Recommendations /></RequireAuth>} />
         <Route path="/my-collection"   element={<RequireAuth><MyCollection /></RequireAuth>} />
+        <Route path="/wishlist"        element={<RequireAuth><Wishlist /></RequireAuth>} />
         <Route path="/profile"         element={<RequireAuth><Profile /></RequireAuth>} />
 
-        {/* Admin only */}
         <Route path="/admin"   element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
-        <Route path="/console" element={<RequireAdmin><QueryConsole /></RequireAdmin>} />
+        <Route path="/console" element={<RequireAuth><QueryConsole /></RequireAuth>} />
 
-        {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </BrowserRouter>
   )
 }
-

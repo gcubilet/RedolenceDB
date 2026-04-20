@@ -62,22 +62,34 @@ export default function OnboardingQuiz() {
   }
 
   async function finish() {
-    // Collect all tags from chosen answers
-    const profileTags = [...new Set(
-      Object.entries(answers).flatMap(([stepIdx, optIdx]) =>
-        STEPS[stepIdx].options[optIdx].tags
-      )
-    )]
+  if (!user) {
+    console.error('No user found')
+    return
+  }
 
-    // Save to Supabase
-    await supabase.from('quiz_responses').upsert({
+  const finalAnswers = { ...answers }
+
+  const profileTags = [...new Set(
+    Object.entries(finalAnswers).flatMap(([stepIdx, optIdx]) =>
+      STEPS[Number(stepIdx)].options[optIdx].tags
+    )
+  )]
+
+  const { data, error } = await supabase
+    .from('quiz_responses')
+    .upsert({
       user_id: user.id,
-      answers,
+      answers: finalAnswers,
       profile_tags: profileTags,
     }, { onConflict: 'user_id' })
 
-    navigate('/recommendations')
+  if (error) {
+    console.error('Supabase error:', error)
+    return
   }
+
+  navigate('/recommendations')
+}
 
   const current = STEPS[step]
   const selected = answers[step]

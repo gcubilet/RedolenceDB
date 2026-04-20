@@ -1,14 +1,15 @@
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../lib/supabase'
-
+import { FontAwesomeIcon } from '@fortawesome/react-fontawesome'
+import { faEye, faEyeSlash } from '@fortawesome/free-solid-svg-icons'
 export default function LoginRegister() {
   const navigate = useNavigate()
   const [mode, setMode] = useState('login')       // 'login' | 'register' | 'forgot'
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const [success, setSuccess] = useState('')
-  const [form, setForm] = useState({ name: '', email: '', password: '', confirm: '' })
+  const [form, setForm] = useState({ name: '', age: '', email: '', password: '', confirm: '' })
 
   const f = (key) => (e) => setForm(prev => ({ ...prev, [key]: e.target.value }))
 
@@ -17,8 +18,11 @@ export default function LoginRegister() {
     if (mode === 'forgot') return null
     if (!form.password) return 'Password is required.'
     if (form.password.length < 8) return 'Password must be at least 8 characters.'
+    
     if (mode === 'register') {
       if (!form.name.trim()) return 'Name is required.'
+      if (!form.age) return 'Age is required.'
+      if (parseInt(form.age) < 0) return 'Age cannot be negative.'
       if (form.password !== form.confirm) return 'Passwords do not match.'
     }
     return null
@@ -48,11 +52,14 @@ export default function LoginRegister() {
           email: form.email,
           password: form.password,
           options: {
-            data: { name: form.name },   // passed to handle_new_user trigger
+            data: { 
+              name: form.name,
+              age: parseInt(form.age) 
+            },
           }
         })
         if (error) throw error
-        setSuccess('Account created! Check your email to confirm before logging in.')
+        setSuccess('Account created!')
 
       } else if (mode === 'forgot') {
         const { error } = await supabase.auth.resetPasswordForEmail(form.email, {
@@ -69,18 +76,9 @@ export default function LoginRegister() {
     }
   }
 
-  async function handleOAuth(provider) {
-    setError('')
-    const { error } = await supabase.auth.signInWithOAuth({
-      provider,
-      options: { redirectTo: `${window.location.origin}/` }
-    })
-    if (error) setError(error.message)
-  }
-
   const titles = { login: 'Welcome back', register: 'Create your account', forgot: 'Reset password' }
   const subtitles = {
-    login: 'Sign in to your ScentBase account',
+    login: 'Sign in to your RedolenceDB account',
     register: 'Start building your fragrance collection',
     forgot: "We'll send you a link to reset your password",
   }
@@ -88,15 +86,12 @@ export default function LoginRegister() {
   return (
     <div style={styles.page}>
       <div style={styles.card}>
-
-        {/* Header */}
         <div style={styles.header}>
-          <div style={styles.logo}>SB</div>
+          <div style={styles.logo}>RDB</div>
           <h1 style={styles.title}>{titles[mode]}</h1>
           <p style={styles.subtitle}>{subtitles[mode]}</p>
         </div>
 
-        {/* Error / success banners */}
         {error && (
           <div style={styles.banner('error')}>
             <span style={styles.bannerIcon}>!</span>
@@ -110,41 +105,32 @@ export default function LoginRegister() {
           </div>
         )}
 
-        {/* OAuth buttons — only on login/register */}
-        {mode !== 'forgot' && (
-          <>
-            <div style={styles.oauthRow}>
-              <button style={styles.oauthBtn} onClick={() => handleOAuth('google')} type="button">
-                <OAuthIcon provider="google" />
-                Continue with Google
-              </button>
-              <button style={styles.oauthBtn} onClick={() => handleOAuth('github')} type="button">
-                <OAuthIcon provider="github" />
-                Continue with GitHub
-              </button>
-            </div>
-            <div style={styles.divider}>
-              <span style={styles.dividerLine} />
-              <span style={styles.dividerText}>or continue with email</span>
-              <span style={styles.dividerLine} />
-            </div>
-          </>
-        )}
-
-        {/* Form */}
         <form onSubmit={handleSubmit} style={styles.form}>
           {mode === 'register' && (
-            <Field label="Full name" id="name">
-              <input
-                id="name"
-                type="text"
-                value={form.name}
-                onChange={f('name')}
-                placeholder="Your name"
-                autoComplete="name"
-                style={styles.input}
-              />
-            </Field>
+            <>
+              <Field label="Full name" id="name">
+                <input
+                  id="name"
+                  type="text"
+                  value={form.name}
+                  onChange={f('name')}
+                  placeholder="Your name"
+                  autoComplete="name"
+                  style={styles.input}
+                />
+              </Field>
+              <Field label="Age" id="age">
+                <input
+                  id="age"
+                  type="number"
+                  min="0"
+                  value={form.age}
+                  onChange={f('age')}
+                  placeholder="Your age"
+                  style={styles.input}
+                />
+              </Field>
+            </>
           )}
 
           <Field label="Email address" id="email">
@@ -204,7 +190,6 @@ export default function LoginRegister() {
           </button>
         </form>
 
-        {/* Mode switcher */}
         <p style={styles.switchText}>
           {mode === 'login' && <>
             Don't have an account?{' '}
@@ -228,8 +213,6 @@ export default function LoginRegister() {
     </div>
   )
 }
-
-// ---- Sub-components ----
 
 function Field({ label, id, children }) {
   return (
@@ -259,25 +242,9 @@ function PasswordInput({ id, value, onChange, placeholder, autoComplete }) {
         style={styles.eyeBtn}
         aria-label={visible ? 'Hide password' : 'Show password'}
       >
-        {visible ? '🙈' : '👁'}
+        <FontAwesomeIcon icon={visible ? faEyeSlash : faEye} style={{ color: "#7f77dd" }} /> 
       </button>
     </div>
-  )
-}
-
-function OAuthIcon({ provider }) {
-  if (provider === 'google') return (
-    <svg width="16" height="16" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-      <path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/>
-      <path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/>
-      <path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/>
-      <path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/>
-    </svg>
-  )
-  return (
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor" style={{ flexShrink: 0 }}>
-      <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0024 12c0-6.63-5.37-12-12-12z"/>
-    </svg>
   )
 }
 
@@ -292,98 +259,20 @@ function Spinner() {
   )
 }
 
-// ---- Styles ----
-
 const styles = {
-  page: {
-    minHeight: '100vh',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '2rem 1rem',
-    background: 'var(--color-background-tertiary)',
-  },
-  card: {
-    width: '100%',
-    maxWidth: 420,
-    background: 'var(--color-background-primary)',
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 16,
-    padding: '2rem',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '1.25rem',
-  },
+  page: { minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '2rem 1rem', background: 'var(--color-background-tertiary)' },
+  card: { width: '100%', maxWidth: 420, background: 'var(--color-background-primary)', border: '0.5px solid var(--color-border-secondary)', borderRadius: 16, padding: '2rem', display: 'flex', flexDirection: 'column', gap: '1.25rem' },
   header: { textAlign: 'center' },
-  logo: {
-    width: 44, height: 44, borderRadius: 12,
-    background: '#7F77DD', color: '#fff',
-    display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-    fontWeight: 500, fontSize: 16, marginBottom: 12,
-    fontFamily: 'var(--font-sans)',
-  },
-  title: {
-    fontSize: 22, fontWeight: 500, margin: '0 0 4px',
-    color: 'var(--color-text-primary)',
-    fontFamily: 'var(--font-sans)',
-  },
-  subtitle: {
-    fontSize: 14, color: 'var(--color-text-secondary)', margin: 0,
-  },
-  banner: (type) => ({
-    display: 'flex', alignItems: 'flex-start', gap: 8,
-    padding: '10px 12px', borderRadius: 8, fontSize: 13,
-    background: type === 'error' ? 'var(--color-background-danger)' : 'var(--color-background-success)',
-    color: type === 'error' ? 'var(--color-text-danger)' : 'var(--color-text-success)',
-    border: `0.5px solid ${type === 'error' ? 'var(--color-border-danger)' : 'var(--color-border-success)'}`,
-  }),
+  logo: { width: 44, height: 44, borderRadius: 12, background: '#7F77DD', color: '#fff', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', fontWeight: 500, fontSize: 16, marginBottom: 12, fontFamily: 'var(--font-sans)' },
+  title: { fontSize: 22, fontWeight: 500, margin: '0 0 4px', color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)' },
+  subtitle: { fontSize: 14, color: 'var(--color-text-secondary)', margin: 0 },
+  banner: (type) => ({ display: 'flex', alignItems: 'flex-start', gap: 8, padding: '10px 12px', borderRadius: 8, fontSize: 13, background: type === 'error' ? 'var(--color-background-danger)' : 'var(--color-background-success)', color: type === 'error' ? 'var(--color-text-danger)' : 'var(--color-text-success)', border: `0.5px solid ${type === 'error' ? 'var(--color-border-danger)' : 'var(--color-border-success)'}` }),
   bannerIcon: { fontWeight: 500, flexShrink: 0 },
-  oauthRow: { display: 'flex', flexDirection: 'column', gap: 8 },
-  oauthBtn: {
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10,
-    padding: '9px 16px', borderRadius: 8, fontSize: 14, fontWeight: 500,
-    border: '0.5px solid var(--color-border-secondary)',
-    background: 'var(--color-background-primary)',
-    color: 'var(--color-text-primary)', cursor: 'pointer',
-    fontFamily: 'var(--font-sans)',
-    transition: 'background .15s',
-  },
-  divider: {
-    display: 'flex', alignItems: 'center', gap: 10,
-  },
-  dividerLine: {
-    flex: 1, height: '0.5px', background: 'var(--color-border-tertiary)',
-  },
-  dividerText: { fontSize: 12, color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' },
   form: { display: 'flex', flexDirection: 'column', gap: '1rem' },
-  label: {
-    fontSize: 13, fontWeight: 500, color: 'var(--color-text-secondary)',
-  },
-  input: {
-    width: '100%', padding: '8px 12px', fontSize: 14,
-    border: '0.5px solid var(--color-border-secondary)',
-    borderRadius: 8, background: 'var(--color-background-primary)',
-    color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)',
-    outline: 'none', boxSizing: 'border-box',
-  },
-  eyeBtn: {
-    position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)',
-    background: 'none', border: 'none', cursor: 'pointer', fontSize: 14,
-    color: 'var(--color-text-tertiary)', padding: 2,
-  },
-  submitBtn: {
-    width: '100%', padding: '10px', fontSize: 14, fontWeight: 500,
-    background: '#7F77DD', color: '#fff', border: 'none',
-    borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-sans)',
-    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-    marginTop: 4, transition: 'opacity .15s',
-  },
-  textLink: {
-    background: 'none', border: 'none', cursor: 'pointer',
-    color: '#7F77DD', fontSize: 13, fontWeight: 500,
-    padding: 0, fontFamily: 'var(--font-sans)',
-  },
-  switchText: {
-    textAlign: 'center', fontSize: 13, color: 'var(--color-text-secondary)', margin: 0,
-  },
+  label: { fontSize: 13, fontWeight: 500, color: 'var(--color-text-secondary)' },
+  input: { width: '100%', padding: '8px 12px', fontSize: 14, border: '0.5px solid var(--color-border-secondary)', borderRadius: 8, background: 'var(--color-background-primary)', color: 'var(--color-text-primary)', fontFamily: 'var(--font-sans)', outline: 'none', boxSizing: 'border-box' },
+  eyeBtn: { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', fontSize: 14, color: 'var(--color-text-tertiary)', padding: 2 },
+  submitBtn: { width: '100%', padding: '10px', fontSize: 14, fontWeight: 500, background: '#7F77DD', color: '#fff', border: 'none', borderRadius: 8, cursor: 'pointer', fontFamily: 'var(--font-sans)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginTop: 4, transition: 'opacity .15s' },
+  textLink: { background: 'none', border: 'none', cursor: 'pointer', color: '#7F77DD', fontSize: 13, fontWeight: 500, padding: 0, fontFamily: 'var(--font-sans)' },
+  switchText: { textAlign: 'center', fontSize: 13, color: 'var(--color-text-secondary)', margin: 0 },
 }
