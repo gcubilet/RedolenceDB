@@ -64,6 +64,18 @@ async function fetchNotes(search = '') {
   return data || []
 }
 
+async function fetchAdminLayeringPairs() {
+  const { data } = await supabase
+    .from('layering_pairs')
+    .select(`
+      id, votes, description, created_at,
+      perfume_a:perfumes!layering_pairs_perfume_a_id_fkey ( perfume_id, name, brands(brand_name) ),
+      perfume_b:perfumes!layering_pairs_perfume_b_id_fkey ( perfume_id, name, brands(brand_name) )
+    `)
+    .order('votes', { ascending: false })
+  return data || []
+}
+
 const SCENT_FAMILIES = [
   'Floral', 'Woody', 'Oriental', 'Fresh', 'Citrus', 'Fougère',
   'Chypre', 'Gourmand', 'Aquatic', 'Spicy', 'Aromatic', 'Green',
@@ -114,6 +126,7 @@ export default function AdminDashboard() {
             { key: 'perfumes', label: 'Perfumes' },
             { key: 'brands',   label: 'Brands' },
             { key: 'notes',    label: 'Notes' },
+            { key: 'layering', label: 'Layering pairs' },
             { key: 'reviews',  label: 'Review moderation' },
           ].map(tab => (
             <button
@@ -131,6 +144,7 @@ export default function AdminDashboard() {
           {activeTab === 'perfumes' && <PerfumesTab />}
           {activeTab === 'brands'   && <BrandsTab />}
           {activeTab === 'notes'    && <NotesTab />}
+          {activeTab === 'layering' && <LayeringTab />}
           {activeTab === 'reviews'  && <ReviewsTab />}
         </div>
       </div>
@@ -207,8 +221,8 @@ function PerfumesTab() {
                   <Td muted>{p.release_date ? new Date(p.release_date).getFullYear() : '—'}</Td>
                   <td style={styles.td}>
                     {p.discontinued
-                      ? <span style={styles.discontinuedPill}>Discontinued</span>
-                      : <span style={styles.activePill}>Available</span>
+                      ? <span style={styles.discontinuedPill}>Discontinued {new Date(p.discontinued).getFullYear()}</span>
+                      : <span style={styles.activePill}>Active</span>
                     }
                   </td>
                   <td style={styles.td}>
@@ -400,9 +414,17 @@ async function saveNotes(perfumeId, form, replaceExisting = false) {
     }
   }
   if (rows.length) {
+    // Deduplicate by perfume_id + note_name to avoid ON CONFLICT errors
+    const seen = new Set()
+    const uniqueRows = rows.filter(r => {
+      const key = `${r.perfume_id}:${r.note_name}`
+      if (seen.has(key)) return false
+      seen.add(key)
+      return true
+    })
     const { error } = await supabase
       .from('perfume_notes')
-      .upsert(rows, { onConflict: 'perfume_id,note_name' })
+      .upsert(uniqueRows, { onConflict: 'perfume_id,note_name' })
     if (error) return { error }
   }
   return { error: null }
@@ -725,6 +747,158 @@ function NoteModal({ mode, initial, onClose, onSaved }) {
   )
 }
 
+function LayeringTab() {
+  const queryClient = useQueryClient()
+  const [modal, setModal] = useState(null)
+
+  const { data: pairs = [], isLoading } = useQuery({
+    queryKey: ['admin-layering'],
+    queryFn: fetchAdminLayeringPairs,
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (id) => {
+      const { error } = await supabase.from('layering_pairs').delete().eq('id', id)
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-layering'] }),
+  })
+
+  return (
+    <div>
+      <div style={styles.toolbar}>
+        <span style={{ fontSize: 13, color: '#9A8878', fontFamily: "'DM Sans', sans-serif" }}>
+          {pairs.length} pairs
+        </span>
+      </div>
+
+      {isLoading ? <TableSkeleton /> : (
+        <div style={styles.tableWrap}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <Th>Perfume A</Th>
+                <Th>Perfume B</Th>
+                <Th>Votes</Th>
+                <Th>Description</Th>
+                <Th>Added</Th>
+                <Th align="right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {pairs.length === 0 && (
+                <tr><td colSpan={6} style={styles.emptyCell}>No layering pairs yet.</td></tr>
+              )}
+              {pairs.map(pair => (
+                <tr key={pair.id} className="table-row">
+                  <td style={styles.td}>
+                    <p style={{ margin: '0 0 1px', fontWeight: 500, color: '#2C2018', fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{pair.perfume_a?.name}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9A8878', fontFamily: "'DM Sans', sans-serif" }}>{pair.perfume_a?.brands?.brand_name}</p>
+                  </td>
+                  <td style={styles.td}>
+                    <p style={{ margin: '0 0 1px', fontWeight: 500, color: '#2C2018', fontFamily: "'DM Sans', sans-serif", fontSize: 13 }}>{pair.perfume_b?.name}</p>
+                    <p style={{ margin: 0, fontSize: 11, color: '#9A8878', fontFamily: "'DM Sans', sans-serif" }}>{pair.perfume_b?.brands?.brand_name}</p>
+                  </td>
+                  <td style={styles.td}>
+                    <span style={styles.votesPill}>{pair.votes}</span>
+                  </td>
+                  <td style={{ ...styles.td, maxWidth: 260 }}>
+                    <p style={styles.reviewText}>{pair.description || <span style={{ color: '#C4B8A8' }}>—</span>}</p>
+                  </td>
+                  <Td muted>
+                    {pair.created_at ? new Date(pair.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+                  </Td>
+                  <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
+                    <button className="action-link" onClick={() => setModal({ data: pair })} style={styles.tableAction}>Edit</button>
+                    <button className="danger-link" onClick={() => {
+                      if (window.confirm('Delete this layering pair? This cannot be undone.')) deleteMutation.mutate(pair.id)
+                    }} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <LayeringPairModal
+          pair={modal.data}
+          onClose={() => setModal(null)}
+          onSaved={() => {
+            setModal(null)
+            queryClient.invalidateQueries({ queryKey: ['admin-layering'] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function LayeringPairModal({ pair, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    description: pair.description || '',
+    votes:       pair.votes       || 0,
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+
+  async function save() {
+    setSaving(true)
+    setError('')
+    try {
+      const { error } = await supabase
+        .from('layering_pairs')
+        .update({
+          description: form.description || null,
+          votes:       parseInt(form.votes) || 0,
+        })
+        .eq('id', pair.id)
+      if (error) throw error
+      onSaved()
+    } catch (err) {
+      setError(err.message || 'Something went wrong.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const nameA = `${pair.perfume_a?.brands?.brand_name} — ${pair.perfume_a?.name}`
+  const nameB = `${pair.perfume_b?.brands?.brand_name} — ${pair.perfume_b?.name}`
+
+  return (
+    <Modal title="Edit layering pair" onClose={onClose}>
+      <div style={{ marginBottom: 16 }}>
+        <p style={{ fontSize: 12, color: '#9A8878', margin: '0 0 6px', fontFamily: "'DM Sans', sans-serif", textTransform: 'uppercase', letterSpacing: '.05em' }}>Pair</p>
+        <p style={{ fontSize: 13, color: '#2C2018', margin: '0 0 2px', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>{nameA}</p>
+        <p style={{ fontSize: 12, color: '#9A8878', margin: '0 0 2px', fontFamily: "'DM Sans', sans-serif" }}>+ {nameB}</p>
+      </div>
+      <div style={styles.formGrid}>
+        <FormField label="Votes">
+          <input
+            type="number"
+            min="0"
+            value={form.votes}
+            onChange={e => setForm(p => ({ ...p, votes: e.target.value }))}
+            style={styles.input}
+          />
+        </FormField>
+        <FormField label="Description" full>
+          <textarea
+            value={form.description}
+            onChange={e => setForm(p => ({ ...p, description: e.target.value }))}
+            rows={3}
+            placeholder="Why do these layer well?"
+            style={{ ...styles.input, resize: 'vertical' }}
+          />
+        </FormField>
+      </div>
+      {error && <p style={styles.fieldError}>{error}</p>}
+      <ModalFooter onClose={onClose} onSave={save} saving={saving} label="Save changes" />
+    </Modal>
+  )
+}
+
 function ReviewsTab() {
   const queryClient = useQueryClient()
   const [filter, setFilter] = useState('')
@@ -928,6 +1102,7 @@ const styles = {
   emptyCell: { padding: '2rem', textAlign: 'center', color: '#9A8878', fontSize: 13, fontFamily: "'DM Sans', sans-serif" },
   tableAction: { background: 'none', border: 'none', fontSize: 12, color: '#7A6A58', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", padding: '2px 8px', transition: 'color .15s' },
   scorePill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EDE4D8', color: '#7F77DD', fontWeight: 500, fontFamily: "'DM Sans', sans-serif" },
+  votesPill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EEEDFE', color: '#5C56B8', fontWeight: 500, fontFamily: "'DM Sans', sans-serif" },
   tagPill: { display: 'inline-block', fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EDE4D8', color: '#5C4A38', fontFamily: "'DM Sans', sans-serif", fontWeight: 500, marginRight: 4, marginBottom: 2 },
   familyPill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#E1F5EE', color: '#085041', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
   discontinuedPill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#FAECE7', color: '#7A3020', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },

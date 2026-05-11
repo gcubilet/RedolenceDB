@@ -132,7 +132,7 @@ export default function Catalogue() {
               type="text"
               value={search}
               onChange={e => setSearch(e.target.value)}
-              placeholder="Search perfumes or brands…"
+              placeholder="Search perfumes..."
               style={styles.searchInput}
             />
             {search && (

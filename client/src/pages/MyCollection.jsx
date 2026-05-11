@@ -57,7 +57,12 @@ export default function MyCollection() {
     mutationFn: async ({ perfumeId, values }) => {
       const { error } = await supabase
         .from('user_perfumes')
-        .update(values)
+        .update({
+          purchase_date:  values.purchase_date  || null,
+          bottle_size_ml: values.bottle_size_ml ? parseInt(values.bottle_size_ml)    : null,
+          purchase_price: values.purchase_price ? parseFloat(values.purchase_price)  : null,
+          personal_notes: values.personal_notes || null,
+        })
         .eq('user_id', user.id)
         .eq('perfume_id', perfumeId)
       if (error) throw error
@@ -160,7 +165,7 @@ export default function MyCollection() {
               const p = item.perfumes
               const score = avgScore(p?.user_ratings)
               return (
-                <div key={item.id || i} className="collection-row" style={styles.tableRow}>
+                <div key={`${item.user_id}-${item.perfume_id}`} className="collection-row" style={styles.tableRow}>
                   {/* Perfume info */}
                   <div style={{ flex: 3, display: 'flex', alignItems: 'center', gap: 12 }}>
                     <div style={styles.thumb}>
@@ -252,7 +257,7 @@ function EditModal({ item, onSave, onClose, loading }) {
   const f = k => e => setForm(p => ({ ...p, [k]: e.target.value }))
 
   return (
-    <div style={styles.overlay}>
+    <div style={styles.overlay} onClick={e => e.target === e.currentTarget && onClose()}>
       <div style={styles.modal}>
         <h3 style={styles.modalTitle}>Edit — {item.perfumes?.name}</h3>
         <div style={styles.formGrid}>
@@ -266,11 +271,11 @@ function EditModal({ item, onSave, onClose, loading }) {
           </div>
           <div style={styles.formGroup}>
             <label style={styles.formLabel}>Purchase price ($)</label>
-            <input type="number" value={form.purchase_price} onChange={f('purchase_price')} placeholder="0.00" style={styles.formInput} />
+            <input type="number" value={form.purchase_price} onChange={f('purchase_price')} placeholder="0.00" step="0.01" style={styles.formInput} />
           </div>
           <div style={{ ...styles.formGroup, gridColumn: '1 / -1' }}>
             <label style={styles.formLabel}>Personal notes</label>
-            <textarea value={form.personal_notes} onChange={f('personal_notes')} rows={3} placeholder="Any notes about this bottle…" style={styles.formInput} />
+            <textarea value={form.personal_notes} onChange={f('personal_notes')} rows={3} placeholder="Any notes about this bottle…" style={{ ...styles.formInput, resize: 'vertical' }} />
           </div>
         </div>
         <div style={styles.modalFooter}>
@@ -316,9 +321,8 @@ const styles = {
   formGrid: { display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14 },
   formGroup: { display: 'flex', flexDirection: 'column', gap: 5 },
   formLabel: { fontSize: 12, color: '#7A6A58', fontWeight: 500, fontFamily: "'DM Sans', sans-serif" },
-  formInput: { padding: '7px 10px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#fff', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none' },
+  formInput: { padding: '7px 10px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#fff', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none', width: '100%' },
   modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: 8, marginTop: 20, paddingTop: 16, borderTop: '0.5px solid #E8DDD0' },
   cancelBtn: { padding: '8px 18px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
   saveBtn: { padding: '8px 18px', border: 'none', borderRadius: 20, background: '#C4845A', color: '#FDF8F2', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
 }
-

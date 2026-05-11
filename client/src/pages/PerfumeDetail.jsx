@@ -464,26 +464,43 @@ function NoteCard({ note }) {
 
 function LayerCard({ pair, user, queryClient, currentPerfumeId }) {
   const navigate = useNavigate()
-  const [votes, setVotes] = useState(pair.votes)
-  const [voted, setVoted] = useState(false)
+
+  // localStorage-based per-user vote deduplication
+  const storageKey = `voted_pairs_${user?.id || 'anon'}`
+  const getVoted = () => {
+    try { return new Set(JSON.parse(localStorage.getItem(storageKey) || '[]')) }
+    catch { return new Set() }
+  }
+  const [votedPairs, setVotedPairs] = useState(getVoted)
+  const hasVoted = votedPairs.has(pair.id)
+
+  // Optimistic delta on top of server value
+  const [delta, setDelta] = useState(0)
+  const displayVotes = pair.votes + delta
 
   const upvoteMutation = useMutation({
     mutationFn: async () => {
       const { error } = await supabase
         .from('layering_pairs')
-        .update({ votes: votes + 1 })
+        .update({ votes: pair.votes + 1 })
         .eq('id', pair.id)
       if (error) throw error
     },
     onMutate: () => {
-      // Optimistic update
-      setVotes(v => v + 1)
-      setVoted(true)
+      setDelta(1)
+      // Persist vote to localStorage
+      const updated = getVoted()
+      updated.add(pair.id)
+      localStorage.setItem(storageKey, JSON.stringify([...updated]))
+      setVotedPairs(updated)
     },
     onError: () => {
       // Roll back
-      setVotes(v => v - 1)
-      setVoted(false)
+      setDelta(0)
+      const updated = getVoted()
+      updated.delete(pair.id)
+      localStorage.setItem(storageKey, JSON.stringify([...updated]))
+      setVotedPairs(updated)
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['layering', currentPerfumeId])
@@ -492,7 +509,7 @@ function LayerCard({ pair, user, queryClient, currentPerfumeId }) {
 
   function handleUpvote(e) {
     e.stopPropagation()
-    if (!user || voted || upvoteMutation.isPending) return
+    if (!user || hasVoted || upvoteMutation.isPending) return
     upvoteMutation.mutate()
   }
 
@@ -513,21 +530,20 @@ function LayerCard({ pair, user, queryClient, currentPerfumeId }) {
         <p style={styles.layerName}>{pair.other?.name}</p>
         {pair.description && <p style={styles.layerDesc}>{pair.description}</p>}
       </div>
-      {/* Upvote tab */}
       <button
         onClick={handleUpvote}
-        disabled={!user || voted || upvoteMutation.isPending}
-        title={!user ? 'Sign in to upvote' : voted ? 'Upvoted!' : 'Upvote this pairing'}
+        disabled={!user || hasVoted || upvoteMutation.isPending}
+        title={!user ? 'Sign in to upvote' : hasVoted ? 'Already voted' : 'Upvote this pairing'}
         style={{
           ...styles.upvoteBtn,
-          ...(voted ? styles.upvoteBtnActive : {}),
+          ...(hasVoted ? styles.upvoteBtnActive : {}),
           ...(!user ? { opacity: 0.5, cursor: 'default' } : {}),
         }}
       >
         <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <path d="M5 8V2M2 5l3-3 3 3" />
         </svg>
-        <span>{votes}</span>
+        <span>{displayVotes}</span>
       </button>
     </div>
   )
