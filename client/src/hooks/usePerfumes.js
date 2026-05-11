@@ -60,15 +60,27 @@ async function fetchPerfumes(filters) {
     )
   }
 
+  // user_ratings.best_season is a text[] (e.g. ['Spring','Summer']).
   if (filters.season) {
     results = results.filter(p =>
-      p.user_ratings?.some(r => r.season === filters.season)
+      p.user_ratings?.some(r =>
+        Array.isArray(r.best_season) && r.best_season.includes(filters.season)
+      )
     )
   }
 
+  // user_ratings.gender_lean is a text column: feminine | slightly_feminine |
+  // unisex | slightly_masculine | masculine. The UI filters on the three
+  // "base" leans; treat the slightly_* values as matches too.
   if (filters.gender) {
+    const group = (lean) => {
+      if (!lean) return null
+      if (lean === 'feminine' || lean === 'slightly_feminine') return 'feminine'
+      if (lean === 'masculine' || lean === 'slightly_masculine') return 'masculine'
+      return 'unisex'
+    }
     results = results.filter(p =>
-      p.user_ratings?.some(r => r.gender === filters.gender)
+      p.user_ratings?.some(r => group(r.gender_lean) === filters.gender)
     )
   }
 

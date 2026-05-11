@@ -1,6 +1,5 @@
 import { useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
-import { useAuthStore } from '../store/useAuthStore'
 
 const EXAMPLE_QUERIES = [
   { label: 'Top rated perfumes',       sql: `SELECT p.name, b.brand_name, ROUND(AVG(r.score),1) AS avg_score, COUNT(r.*) AS ratings\nFROM perfumes p\nJOIN brands b ON b.brand_id = p.brand_id\nJOIN user_ratings r ON r.perfume_id = p.perfume_id\nGROUP BY p.perfume_id, p.name, b.brand_name\nORDER BY avg_score DESC\nLIMIT 10;` },
@@ -10,7 +9,6 @@ const EXAMPLE_QUERIES = [
 ]
 
 export default function QueryConsole() {
-  const { user } = useAuthStore()
   const [sql, setSql] = useState('')
   const [results, setResults] = useState(null)
   const [error, setError] = useState('')
@@ -214,7 +212,7 @@ const styles = {
   editor: { width: '100%', minHeight: 160, padding: '16px', border: 'none', background: 'transparent', color: '#2C2018', fontSize: 13, fontFamily: "'DM Mono', 'Courier New', monospace", resize: 'vertical', outline: 'none', lineHeight: 1.65 },
   editorFooter: { display: 'flex', justifyContent: 'flex-end', gap: 8, padding: '10px 14px', borderTop: '0.5px solid #EDE4D8' },
   clearBtn: { padding: '7px 16px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
-  runBtn: { padding: '7px 20px', border: 'none', borderRadius: 20, background: '#C4845A', color: '#FDF8F2', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", transition: 'opacity .15s' },
+  runBtn: { padding: '7px 20px', border: 'none', borderRadius: 20, background: '#7F77DD', color: '#FDF8F2', fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", transition: 'opacity .15s' },
   errorBox: { background: 'var(--color-background-danger)', color: 'var(--color-text-danger)', border: '0.5px solid var(--color-border-danger)', borderRadius: 10, padding: '12px 16px', fontSize: 13, fontFamily: "'DM Mono', monospace" },
   resultsWrap: { background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12, overflow: 'hidden' },
   resultsHeader: { display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '0.5px solid #EDE4D8', background: '#F0E8DC' },

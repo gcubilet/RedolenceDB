@@ -177,6 +177,9 @@ export default function MyCollection() {
                         {p?.name}
                       </p>
                       <p style={styles.brandName}>{p?.brands?.brand_name}</p>
+                      {item.personal_notes && (
+                        <p style={styles.personalNotes}>{item.personal_notes}</p>
+                      )}
                     </div>
                   </div>
 
@@ -286,7 +289,7 @@ const styles = {
   header: { display: 'flex', alignItems: 'flex-end', justifyContent: 'space-between', marginBottom: '2rem' },
   eyebrow: { fontSize: 11, fontWeight: 500, letterSpacing: '.1em', textTransform: 'uppercase', color: '#9A8878', margin: '0 0 8px', fontFamily: "'DM Sans', sans-serif" },
   title: { fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 40, fontWeight: 300, color: '#2C2018', margin: 0 },
-  addBtn: { padding: '9px 20px', background: '#C4845A', color: '#FDF8F2', borderRadius: 24, fontSize: 13, fontWeight: 500, textDecoration: 'none', fontFamily: "'DM Sans', sans-serif", border: 'none', cursor: 'pointer', display: 'inline-block' },
+  addBtn: { padding: '9px 20px', background: '#7F77DD', color: '#FDF8F2', borderRadius: 24, fontSize: 13, fontWeight: 500, textDecoration: 'none', fontFamily: "'DM Sans', sans-serif", border: 'none', cursor: 'pointer', display: 'inline-block' },
   statsRow: { display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 12, marginBottom: '1.5rem' },
   statCard: { background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12, padding: '16px 20px' },
   statLabel: { fontSize: 11, color: '#9A8878', textTransform: 'uppercase', letterSpacing: '.06em', margin: '0 0 6px', fontFamily: "'DM Sans', sans-serif" },
@@ -300,6 +303,7 @@ const styles = {
   thumb: { width: 40, height: 40, borderRadius: 6, background: '#EDE4D8', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   perfumeName: { fontSize: 14, fontWeight: 500, color: '#2C2018', margin: '0 0 2px', fontFamily: "'Cormorant Garamond', serif", cursor: 'pointer', lineHeight: 1.2 },
   brandName: { fontSize: 11, color: '#9A8878', margin: 0, fontFamily: "'DM Sans', sans-serif" },
+  personalNotes: { fontSize: 11, color: '#7A6A58', margin: '4px 0 0', fontFamily: "'DM Sans', sans-serif", fontStyle: 'italic', lineHeight: 1.4, maxWidth: 260, overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' },
   editBtn: { padding: '4px 12px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 12, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
   removeBtn: { padding: '4px 12px', border: 'none', borderRadius: 20, background: 'none', color: '#9A8878', fontSize: 12, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", transition: 'color .15s' },
   empty: { textAlign: 'center', padding: '5rem 2rem', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 12 },
@@ -317,3 +321,4 @@ const styles = {
   cancelBtn: { padding: '8px 18px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
   saveBtn: { padding: '8px 18px', border: 'none', borderRadius: 20, background: '#C4845A', color: '#FDF8F2', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
 }
+

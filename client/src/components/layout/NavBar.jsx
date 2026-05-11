@@ -24,15 +24,15 @@ export default function NavBar() {
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;1,400&family=DM+Sans:wght@400;500&display=swap');
         .nav-link { transition: color .15s ease; }
-        .nav-link:hover { color: #C4845A !important; }
-        .nav-link.active { color: #C4845A !important; }
+        .nav-link:hover { color: #7F77DD !important; }
+        .nav-link.active { color: #7F77DD !important; }
         .nav-link.active::after {
           content: '';
           position: absolute;
           bottom: -2px;
           left: 0; right: 0;
           height: 1.5px;
-          background: #C4845A;
+          background: #7F77DD;
           border-radius: 2px;
         }
         .avatar-btn:hover { opacity: .85; }
@@ -45,13 +45,14 @@ export default function NavBar() {
 
           {/* Logo */}
           <Link to="/" style={styles.logo}>
-            <div style={styles.logoMark}>SB</div>
-            <span style={styles.logoText}>ScentBase</span>
+            <div style={styles.logoMark}>RDB</div>
+            <span style={styles.logoText}>RedolenceDB</span>
           </Link>
 
           {/* Centre links */}
           <div style={styles.links}>
             <NavLink to="/" label="Catalogue" isActive={isActive('/')} />
+            <NavLink to="/brands" label="Brands" isActive={isActive('/brands')} />
             {user && <NavLink to="/my-collection" label="My collection" isActive={isActive('/my-collection')} />}
             {user && <NavLink to="/wishlist" label="Wishlist" isActive={isActive('/wishlist')} />}
             {user && <NavLink to="/recommendations" label="For you" isActive={isActive('/recommendations')} />}
@@ -122,7 +123,7 @@ function NavLink({ to, label, isActive }) {
       className={`nav-link${isActive ? ' active' : ''}`}
       style={{
         ...styles.navLink,
-        color: isActive ? '#C4845A' : '#5C4A38',
+        color: isActive ? '#7F77DD' : '#5C4A38',
         position: 'relative',
       }}
     >
@@ -185,7 +186,7 @@ const styles = {
   },
   logoMark: {
     width: 32, height: 32,
-    background: '#C4845A',
+    background: '#7F77DD',
     borderRadius: 8,
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     color: '#FDF8F2',
@@ -232,7 +233,7 @@ const styles = {
   avatar: {
     width: 28, height: 28,
     borderRadius: '50%',
-    background: '#C4845A',
+    background: '#7F77DD',
     color: '#FDF8F2',
     display: 'flex', alignItems: 'center', justifyContent: 'center',
     fontSize: 11, fontWeight: 500,
@@ -322,7 +323,7 @@ const styles = {
     textDecoration: 'none',
     fontFamily: "'DM Sans', sans-serif",
     padding: '6px 16px',
-    background: '#C4845A',
+    background: '#7F77DD',
     borderRadius: 20,
     fontWeight: 500,
   },

@@ -15,6 +15,7 @@ import Profile         from './pages/Profile'
 import Recommendations from './pages/Recommendations'
 import AdminDashboard  from './pages/AdminDashboard'
 import QueryConsole    from './pages/QueryConsole'
+import Brands from './pages/Brands'
 
 function AuthInit() {
   const { setSession, setProfile, user } = useAuthStore()
@@ -68,7 +69,7 @@ export default function App() {
         <Route path="/my-collection"   element={<RequireAuth><MyCollection /></RequireAuth>} />
         <Route path="/wishlist"        element={<RequireAuth><Wishlist /></RequireAuth>} />
         <Route path="/profile"         element={<RequireAuth><Profile /></RequireAuth>} />
-
+        <Route path="/brands" element={<Brands />} />
         <Route path="/admin"   element={<RequireAdmin><AdminDashboard /></RequireAdmin>} />
         <Route path="/console" element={<RequireAuth><QueryConsole /></RequireAuth>} />
 

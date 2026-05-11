@@ -4,8 +4,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/useAuthStore'
 
-// ─── Data fetching ────────────────────────────────────────────────────────────
-
 async function fetchStats() {
   const [perfumes, brands, users, ratings] = await Promise.all([
     supabase.from('perfumes').select('perfume_id', { count: 'exact', head: true }),
@@ -24,7 +22,14 @@ async function fetchStats() {
 async function fetchPerfumes(search = '') {
   let q = supabase
     .from('perfumes')
-    .select('perfume_id, name, concentration, release_date, brands(brand_id, brand_name)')
+    .select(`
+      perfume_id, name, concentration, release_date, discontinued, description, image_url, tags,
+      brands(brand_id, country, brand_name),
+      perfume_notes (
+        note_type,
+        notes!perfume_notes_note_name_fkey ( name )
+      )
+    `)
     .order('name')
   if (search) q = q.ilike('name', `%${search}%`)
   const { data } = await q
@@ -49,11 +54,25 @@ async function fetchReviews() {
   return data || []
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
+async function fetchNotes(search = '') {
+  let q = supabase
+    .from('notes')
+    .select('name, scent_family, photo_url, description')
+    .order('name')
+  if (search) q = q.ilike('name', `%${search}%`)
+  const { data } = await q
+  return data || []
+}
+
+const SCENT_FAMILIES = [
+  'Floral', 'Woody', 'Oriental', 'Fresh', 'Citrus', 'Fougère',
+  'Chypre', 'Gourmand', 'Aquatic', 'Spicy', 'Aromatic', 'Green',
+  'Powdery', 'Fruity', 'Leather', 'Musk', 'Resinous', 'Earthy',
+]
 
 export default function AdminDashboard() {
   const { user } = useAuthStore()
-  const [isAdmin, setIsAdmin]   = useState(null)
+  const [isAdmin, setIsAdmin] = useState(null)
   const [activeTab, setActiveTab] = useState('perfumes')
 
   useEffect(() => {
@@ -76,8 +95,8 @@ export default function AdminDashboard() {
         * { box-sizing: border-box; }
         body { background: #F7F2EC; font-family: 'DM Sans', sans-serif; }
         .tab-btn:hover:not(.active-tab) { color: #5C4A38 !important; }
-        .table-row:hover td, .table-row:hover > div { background: #F5EFE6 !important; }
-        .action-link:hover { color: #C4845A !important; }
+        .table-row:hover td { background: #F5EFE6 !important; }
+        .action-link:hover { color: #7F77DD !important; }
         .danger-link:hover { color: #C05A3A !important; }
       `}</style>
 
@@ -90,11 +109,11 @@ export default function AdminDashboard() {
           <StatsRow />
         </div>
 
-        {/* Tabs */}
         <div style={styles.tabs}>
           {[
             { key: 'perfumes', label: 'Perfumes' },
             { key: 'brands',   label: 'Brands' },
+            { key: 'notes',    label: 'Notes' },
             { key: 'reviews',  label: 'Review moderation' },
           ].map(tab => (
             <button
@@ -111,14 +130,13 @@ export default function AdminDashboard() {
         <div style={styles.tabContent}>
           {activeTab === 'perfumes' && <PerfumesTab />}
           {activeTab === 'brands'   && <BrandsTab />}
+          {activeTab === 'notes'    && <NotesTab />}
           {activeTab === 'reviews'  && <ReviewsTab />}
         </div>
       </div>
     </>
   )
 }
-
-// ─── Stats row ────────────────────────────────────────────────────────────────
 
 function StatsRow() {
   const { data: stats } = useQuery({ queryKey: ['admin-stats'], queryFn: fetchStats })
@@ -139,12 +157,10 @@ function StatsRow() {
   )
 }
 
-// ─── Perfumes tab ─────────────────────────────────────────────────────────────
-
 function PerfumesTab() {
   const queryClient = useQueryClient()
-  const [search, setSearch]   = useState('')
-  const [modal, setModal]     = useState(null)  // null | { mode: 'add' | 'edit', data? }
+  const [search, setSearch] = useState('')
+  const [modal, setModal]   = useState(null)
 
   const { data: perfumes = [], isLoading } = useQuery({
     queryKey: ['admin-perfumes', search],
@@ -157,14 +173,8 @@ function PerfumesTab() {
       const { error } = await supabase.from('perfumes').delete().eq('perfume_id', id)
       if (error) throw error
     },
-    onSuccess: () => queryClient.invalidateQueries(['admin-perfumes']),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-perfumes'] }),
   })
-
-  function confirmDelete(p) {
-    if (window.confirm(`Delete "${p.name}"? This cannot be undone.`)) {
-      deleteMutation.mutate(p.perfume_id)
-    }
-  }
 
   return (
     <div>
@@ -175,21 +185,19 @@ function PerfumesTab() {
         </button>
       </div>
 
-      {isLoading ? <TableSkeleton cols={5} /> : (
+      {isLoading ? <TableSkeleton /> : (
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
               <tr>
-                <Th>Name</Th>
-                <Th>Brand</Th>
-                <Th>Concentration</Th>
-                <Th>Year</Th>
+                <Th>Name</Th><Th>Brand</Th><Th>Concentration</Th><Th>Year</Th>
+                <Th>Status</Th><Th>Tags</Th>
                 <Th align="right">Actions</Th>
               </tr>
             </thead>
             <tbody>
               {perfumes.length === 0 && (
-                <tr><td colSpan={5} style={styles.emptyCell}>No perfumes found.</td></tr>
+                <tr><td colSpan={7} style={styles.emptyCell}>No perfumes found.</td></tr>
               )}
               {perfumes.map(p => (
                 <tr key={p.perfume_id} className="table-row">
@@ -197,17 +205,22 @@ function PerfumesTab() {
                   <Td muted>{p.brands?.brand_name}</Td>
                   <Td>{p.concentration && <ConcentrationBadge c={p.concentration} />}</Td>
                   <Td muted>{p.release_date ? new Date(p.release_date).getFullYear() : '—'}</Td>
+                  <td style={styles.td}>
+                    {p.discontinued
+                      ? <span style={styles.discontinuedPill}>Discontinued</span>
+                      : <span style={styles.activePill}>Available</span>
+                    }
+                  </td>
+                  <td style={styles.td}>
+                    {(p.tags || []).map(tag => (
+                      <span key={tag} style={styles.tagPill}>{tag}</span>
+                    ))}
+                  </td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>
-                    <button
-                      className="action-link"
-                      onClick={() => setModal({ mode: 'edit', data: p })}
-                      style={styles.tableAction}
-                    >Edit</button>
-                    <button
-                      className="danger-link"
-                      onClick={() => confirmDelete(p)}
-                      style={{ ...styles.tableAction, color: '#9A8878' }}
-                    >Delete</button>
+                    <button className="action-link" onClick={() => setModal({ mode: 'edit', data: p })} style={styles.tableAction}>Edit</button>
+                    <button className="danger-link" onClick={() => {
+                      if (window.confirm(`Delete "${p.name}"? This cannot be undone.`)) deleteMutation.mutate(p.perfume_id)
+                    }} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -222,59 +235,101 @@ function PerfumesTab() {
           initial={modal.data}
           brands={brands}
           onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); queryClient.invalidateQueries(['admin-perfumes']); queryClient.invalidateQueries(['admin-stats']) }}
+          onSaved={() => {
+            setModal(null)
+            queryClient.invalidateQueries({ queryKey: ['admin-perfumes'] })
+            queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+          }}
         />
       )}
     </div>
   )
 }
 
+const CONCENTRATION_OPTIONS = [
+  { value: 'Extrait de parfum', short: 'Parfum' },
+  { value: 'Eau de parfum',     short: 'EDP' },
+  { value: 'Eau de toilette',   short: 'EDT' },
+  { value: 'Eau friche',        short: 'Fraîche' },
+]
+
 function PerfumeModal({ mode, initial, brands, onClose, onSaved }) {
+  const initialNotesByTier = { top: [], middle: [], base: [] }
+  ;(initial?.perfume_notes || []).forEach(pn => {
+    const tier = pn.note_type
+    const name = pn.notes?.name
+    if (tier && name && initialNotesByTier[tier]) initialNotesByTier[tier].push(name)
+  })
+
   const [form, setForm] = useState({
-    name:         initial?.name         || '',
-    brand_id:     initial?.brands?.brand_id || '',
-    concentration:initial?.concentration || 'EDP',
-    release_date: initial?.release_date || '',
-    description:  initial?.description  || '',
-    image_url:    initial?.image_url    || '',
-    top_notes:    '',
-    middle_notes: '',
-    base_notes:   '',
+    name:          initial?.name                || '',
+    brand_id:      initial?.brands?.brand_id    || '',
+    concentration: initial?.concentration       || 'Eau de parfum',
+    release_date:  initial?.release_date        || '',
+    discontinued:  initial?.discontinued        || '',
+    description:   initial?.description         || '',
+    image_url:     initial?.image_url           || '',
+    tags:          (initial?.tags || []).join(', '),
+    top_notes:     initialNotesByTier.top.join(', '),
+    middle_notes:  initialNotesByTier.middle.join(', '),
+    base_notes:    initialNotesByTier.base.join(', '),
   })
   const [saving, setSaving] = useState(false)
   const [error, setError]   = useState('')
   const f = k => e => setForm(p => ({ ...p, [k]: e.target.value }))
 
   async function save() {
-    if (!form.name.trim()) return setError('Name is required.')
-    if (!form.brand_id)    return setError('Brand is required.')
-    setSaving(true); setError('')
+    if (!form.name.trim())  return setError('Name is required.')
+    if (!form.brand_id)     return setError('Brand is required.')
+    setSaving(true)
+    setError('')
 
-    const payload = {
-      name:          form.name.trim(),
-      brand_id:      parseInt(form.brand_id),
-      concentration: form.concentration || null,
-      release_date:  form.release_date  || null,
-      description:   form.description   || null,
-      image_url:     form.image_url     || null,
+    try {
+      const payload = {
+        name:          form.name.trim(),
+        brand_id:      parseInt(form.brand_id),
+        concentration: form.concentration || null,
+        release_date:  form.release_date  || null,
+        discontinued:  form.discontinued  || null,
+        description:   form.description   || null,
+        image_url:     form.image_url     || null,
+        tags:          form.tags
+          ? form.tags.split(',').map(t => t.trim()).filter(Boolean)
+          : [],
+      }
+
+      if (mode === 'edit') {
+        const { data, error } = await supabase
+          .from('perfumes')
+          .update(payload)
+          .eq('perfume_id', initial.perfume_id)
+          .select()
+        console.log('perfume edit:', data, error)
+        if (error) throw error
+
+        const { error: notesError } = await saveNotes(initial.perfume_id, form, true)
+        if (notesError) throw notesError
+
+      } else {
+        const { data, error } = await supabase
+          .from('perfumes')
+          .insert(payload)
+          .select('perfume_id')
+          .single()
+        console.log('perfume insert:', data, error)
+        if (error) throw error
+
+        const { error: notesError } = await saveNotes(data.perfume_id, form, false)
+        if (notesError) throw notesError
+      }
+
+      onSaved()
+    } catch (err) {
+      console.error('Perfume save failed:', err)
+      setError(err.message || 'Something went wrong.')
+    } finally {
+      setSaving(false)
     }
-
-    let perfumeId = initial?.perfume_id
-
-    if (mode === 'edit') {
-      const { error } = await supabase.from('perfumes').update(payload).eq('perfume_id', perfumeId)
-      if (error) { setError(error.message); setSaving(false); return }
-    } else {
-      const { data, error } = await supabase.from('perfumes').insert(payload).select('perfume_id').single()
-      if (error) { setError(error.message); setSaving(false); return }
-      perfumeId = data.perfume_id
-
-      // Save notes
-      await saveNotes(perfumeId, form)
-    }
-
-    setSaving(false)
-    onSaved()
   }
 
   return (
@@ -291,29 +346,35 @@ function PerfumeModal({ mode, initial, brands, onClose, onSaved }) {
         </FormField>
         <FormField label="Concentration">
           <select value={form.concentration} onChange={f('concentration')} style={styles.input}>
-            {['Parfum','EDP','EDT','EDC','Cologne'].map(c => <option key={c}>{c}</option>)}
+            {CONCENTRATION_OPTIONS.map(c => (
+              <option key={c.value} value={c.value}>{c.short} — {c.value}</option>
+            ))}
           </select>
         </FormField>
         <FormField label="Release date">
           <input type="date" value={form.release_date} onChange={f('release_date')} style={styles.input} />
         </FormField>
+        <FormField label="Discontinued date">
+          <input type="date" value={form.discontinued} onChange={f('discontinued')} style={styles.input} />
+        </FormField>
         <FormField label="Image URL" full>
           <input value={form.image_url} onChange={f('image_url')} placeholder="https://…" style={styles.input} />
+        </FormField>
+        <FormField label="Tags" full>
+          <input value={form.tags} onChange={f('tags')} placeholder="e.g. woody, fresh, summer, unisex…" style={styles.input} />
         </FormField>
         <FormField label="Description" full>
           <textarea value={form.description} onChange={f('description')} rows={3} placeholder="Short description…" style={{ ...styles.input, resize: 'vertical' }} />
         </FormField>
-        {mode === 'add' && <>
-          <FormField label="Top notes">
-            <input value={form.top_notes} onChange={f('top_notes')} placeholder="Bergamot, Saffron…" style={styles.input} />
-          </FormField>
-          <FormField label="Middle notes">
-            <input value={form.middle_notes} onChange={f('middle_notes')} placeholder="Jasmine, Rose…" style={styles.input} />
-          </FormField>
-          <FormField label="Base notes" full>
-            <input value={form.base_notes} onChange={f('base_notes')} placeholder="Cedarwood, Musk…" style={styles.input} />
-          </FormField>
-        </>}
+        <FormField label="Top notes">
+          <input value={form.top_notes} onChange={f('top_notes')} placeholder="Bergamot, Saffron…" style={styles.input} />
+        </FormField>
+        <FormField label="Middle notes">
+          <input value={form.middle_notes} onChange={f('middle_notes')} placeholder="Jasmine, Rose…" style={styles.input} />
+        </FormField>
+        <FormField label="Base notes" full>
+          <input value={form.base_notes} onChange={f('base_notes')} placeholder="Cedarwood, Musk…" style={styles.input} />
+        </FormField>
       </div>
       {error && <p style={styles.fieldError}>{error}</p>}
       <ModalFooter onClose={onClose} onSave={save} saving={saving} label={mode === 'edit' ? 'Save changes' : 'Add perfume'} />
@@ -321,22 +382,31 @@ function PerfumeModal({ mode, initial, brands, onClose, onSaved }) {
   )
 }
 
-async function saveNotes(perfumeId, form) {
+async function saveNotes(perfumeId, form, replaceExisting = false) {
+  if (replaceExisting) {
+    const { error } = await supabase.from('perfume_notes').delete().eq('perfume_id', perfumeId)
+    if (error) return { error }
+  }
   const rows = []
   for (const [pos, raw] of [['top', form.top_notes], ['middle', form.middle_notes], ['base', form.base_notes]]) {
     for (const name of (raw || '').split(',').map(s => s.trim()).filter(Boolean)) {
-      const { data: note } = await supabase
+      const { data: note, error: noteErr } = await supabase
         .from('notes')
         .upsert({ name }, { onConflict: 'name' })
         .select('name')
         .single()
+      if (noteErr) return { error: noteErr }
       if (note) rows.push({ perfume_id: perfumeId, note_name: note.name, note_type: pos })
     }
   }
-  if (rows.length) await supabase.from('perfume_notes').upsert(rows, { onConflict: 'perfume_id,note_name' })
+  if (rows.length) {
+    const { error } = await supabase
+      .from('perfume_notes')
+      .upsert(rows, { onConflict: 'perfume_id,note_name' })
+    if (error) return { error }
+  }
+  return { error: null }
 }
-
-// ─── Brands tab ───────────────────────────────────────────────────────────────
 
 function BrandsTab() {
   const queryClient = useQueryClient()
@@ -349,14 +419,11 @@ function BrandsTab() {
       const { error } = await supabase.from('brands').delete().eq('brand_id', id)
       if (error) throw error
     },
-    onSuccess: () => { queryClient.invalidateQueries(['brands']); queryClient.invalidateQueries(['admin-stats']) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['brands'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+    },
   })
-
-  function confirmDelete(b) {
-    if (window.confirm(`Delete "${b.brand_name}"? All perfumes under this brand will also be deleted.`)) {
-      deleteMutation.mutate(b.brand_id)
-    }
-  }
 
   return (
     <div>
@@ -369,14 +436,12 @@ function BrandsTab() {
         </button>
       </div>
 
-      {isLoading ? <TableSkeleton cols={3} /> : (
+      {isLoading ? <TableSkeleton /> : (
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
               <tr>
-                <Th>Brand name</Th>
-                <Th>Country</Th>
-                <Th align="right">Actions</Th>
+                <Th>Brand name</Th><Th>Country</Th><Th align="right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -389,7 +454,9 @@ function BrandsTab() {
                   <Td muted>{b.country || '—'}</Td>
                   <td style={{ ...styles.td, textAlign: 'right' }}>
                     <button className="action-link" onClick={() => setModal({ mode: 'edit', data: b })} style={styles.tableAction}>Edit</button>
-                    <button className="danger-link" onClick={() => confirmDelete(b)} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete</button>
+                    <button className="danger-link" onClick={() => {
+                      if (window.confirm(`Delete "${b.brand_name}"? All its perfumes will also be deleted.`)) deleteMutation.mutate(b.brand_id)
+                    }} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -403,7 +470,11 @@ function BrandsTab() {
           mode={modal.mode}
           initial={modal.data}
           onClose={() => setModal(null)}
-          onSaved={() => { setModal(null); queryClient.invalidateQueries(['brands']); queryClient.invalidateQueries(['admin-stats']) }}
+          onSaved={() => {
+            setModal(null)
+            queryClient.invalidateQueries({ queryKey: ['brands'] })
+            queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+          }}
         />
       )}
     </div>
@@ -423,25 +494,42 @@ function BrandModal({ mode, initial, onClose, onSaved }) {
 
   async function save() {
     if (!form.brand_name.trim()) return setError('Brand name is required.')
-    setSaving(true); setError('')
+    setSaving(true)
+    setError('')
 
-    const payload = {
-      brand_name:  form.brand_name.trim(),
-      country:     form.country     || null,
-      description: form.description || null,
-      logo_url:    form.logo_url    || null,
+    try {
+      const payload = {
+        brand_name:  form.brand_name.trim(),
+        country:     form.country     || null,
+        description: form.description || null,
+        logo_url:    form.logo_url    || null,
+      }
+
+      if (mode === 'edit') {
+        const { data, error } = await supabase
+          .from('brands')
+          .update(payload)
+          .eq('brand_id', initial.brand_id)
+          .select()
+        console.log('brand edit:', data, error)
+        if (error) throw error
+      } else {
+        const { data, error } = await supabase
+          .from('brands')
+          .insert(payload)
+          .select()
+          .single()
+        console.log('brand insert:', data, error)
+        if (error) throw error
+      }
+
+      onSaved()
+    } catch (err) {
+      console.error('Brand save failed:', err)
+      setError(err.message || 'Something went wrong.')
+    } finally {
+      setSaving(false)
     }
-
-    if (mode === 'edit') {
-      const { error } = await supabase.from('brands').update(payload).eq('brand_id', initial.brand_id)
-      if (error) { setError(error.message); setSaving(false); return }
-    } else {
-      const { error } = await supabase.from('brands').insert(payload)
-      if (error) { setError(error.message); setSaving(false); return }
-    }
-
-    setSaving(false)
-    onSaved()
   }
 
   return (
@@ -466,7 +554,176 @@ function BrandModal({ mode, initial, onClose, onSaved }) {
   )
 }
 
-// ─── Reviews tab ──────────────────────────────────────────────────────────────
+function NotesTab() {
+  const queryClient = useQueryClient()
+  const [search, setSearch] = useState('')
+  const [modal, setModal]   = useState(null)
+
+  const { data: notes = [], isLoading } = useQuery({
+    queryKey: ['admin-notes', search],
+    queryFn: () => fetchNotes(search),
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: async (name) => {
+      const { error } = await supabase.from('notes').delete().eq('name', name)
+      if (error) throw error
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-notes'] }),
+  })
+
+  return (
+    <div>
+      <div style={styles.toolbar}>
+        <SearchInput value={search} onChange={setSearch} placeholder="Search notes…" />
+        <button onClick={() => setModal({ mode: 'add' })} style={styles.primaryBtn}>
+          + Add note
+        </button>
+      </div>
+
+      {isLoading ? <TableSkeleton /> : (
+        <div style={styles.tableWrap}>
+          <table style={styles.table}>
+            <thead>
+              <tr>
+                <Th>Name</Th><Th>Scent family</Th><Th>Photo</Th><Th>Description</Th>
+                <Th align="right">Actions</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {notes.length === 0 && (
+                <tr><td colSpan={5} style={styles.emptyCell}>No notes found.</td></tr>
+              )}
+              {notes.map(n => (
+                <tr key={n.name} className="table-row">
+                  <Td bold>{n.name}</Td>
+                  <Td>
+                    {n.scent_family && (
+                      <span style={styles.familyPill}>{n.scent_family}</span>
+                    )}
+                  </Td>
+                  <td style={styles.td}>
+                    {n.photo_url
+                      ? <img src={n.photo_url} alt={n.name} style={{ width: 32, height: 32, borderRadius: 6, objectFit: 'cover', display: 'block' }} />
+                      : <span style={{ color: '#C4B8A8', fontSize: 12 }}>—</span>
+                    }
+                  </td>
+                  <td style={{ ...styles.td, maxWidth: 280 }}>
+                    <p style={styles.reviewText}>{n.description || <span style={{ color: '#C4B8A8' }}>—</span>}</p>
+                  </td>
+                  <td style={{ ...styles.td, textAlign: 'right' }}>
+                    <button className="action-link" onClick={() => setModal({ mode: 'edit', data: n })} style={styles.tableAction}>Edit</button>
+                    <button className="danger-link" onClick={() => {
+                      if (window.confirm(`Delete note "${n.name}"? It will be removed from all perfumes.`)) deleteMutation.mutate(n.name)
+                    }} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {modal && (
+        <NoteModal
+          mode={modal.mode}
+          initial={modal.data}
+          onClose={() => setModal(null)}
+          onSaved={() => {
+            setModal(null)
+            queryClient.invalidateQueries({ queryKey: ['admin-notes'] })
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+function NoteModal({ mode, initial, onClose, onSaved }) {
+  const [form, setForm] = useState({
+    name:         initial?.name         || '',
+    scent_family: initial?.scent_family || '',
+    photo_url:    initial?.photo_url    || '',
+    description:  initial?.description  || '',
+  })
+  const [saving, setSaving] = useState(false)
+  const [error, setError]   = useState('')
+  const f = k => e => setForm(p => ({ ...p, [k]: e.target.value }))
+
+  async function save() {
+    if (!form.name.trim()) return setError('Name is required.')
+    setSaving(true)
+    setError('')
+
+    try {
+      const payload = {
+        name:         form.name.trim(),
+        scent_family: form.scent_family || null,
+        photo_url:    form.photo_url    || null,
+        description:  form.description  || null,
+      }
+
+      if (mode === 'edit') {
+        // name is the PK — if the name changed we need to handle rename carefully
+        if (form.name.trim() !== initial.name) {
+          // Insert new, delete old (FK in perfume_notes uses note_name)
+          const { error: insErr } = await supabase.from('notes').insert(payload)
+          if (insErr) throw insErr
+          // Update perfume_notes references
+          const { error: refErr } = await supabase
+            .from('perfume_notes')
+            .update({ note_name: form.name.trim() })
+            .eq('note_name', initial.name)
+          if (refErr) throw refErr
+          const { error: delErr } = await supabase.from('notes').delete().eq('name', initial.name)
+          if (delErr) throw delErr
+        } else {
+          const { error } = await supabase
+            .from('notes')
+            .update({ scent_family: payload.scent_family, photo_url: payload.photo_url, description: payload.description })
+            .eq('name', initial.name)
+          if (error) throw error
+        }
+      } else {
+        const { error } = await supabase.from('notes').insert(payload)
+        if (error) throw error
+      }
+
+      onSaved()
+    } catch (err) {
+      console.error('Note save failed:', err)
+      setError(err.message || 'Something went wrong.')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Modal title={mode === 'edit' ? `Edit — ${initial?.name}` : 'Add new note'} onClose={onClose}>
+      <div style={styles.formGrid}>
+        <FormField label="Note name" full>
+          <input value={form.name} onChange={f('name')} placeholder="e.g. Bergamot" style={styles.input} />
+        </FormField>
+        <FormField label="Scent family">
+          <select value={form.scent_family} onChange={f('scent_family')} style={styles.input}>
+            <option value="">Select family…</option>
+            {SCENT_FAMILIES.map(fam => (
+              <option key={fam} value={fam}>{fam}</option>
+            ))}
+          </select>
+        </FormField>
+        <FormField label="Photo URL">
+          <input value={form.photo_url} onChange={f('photo_url')} placeholder="https://…" style={styles.input} />
+        </FormField>
+        <FormField label="Description" full>
+          <textarea value={form.description} onChange={f('description')} rows={3} placeholder="Describe the scent…" style={{ ...styles.input, resize: 'vertical' }} />
+        </FormField>
+      </div>
+      {error && <p style={styles.fieldError}>{error}</p>}
+      <ModalFooter onClose={onClose} onSave={save} saving={saving} label={mode === 'edit' ? 'Save changes' : 'Add note'} />
+    </Modal>
+  )
+}
 
 function ReviewsTab() {
   const queryClient = useQueryClient()
@@ -477,7 +734,7 @@ function ReviewsTab() {
     queryFn: fetchReviews,
   })
 
-  const deleteMutation = useMutation({
+  const removeReviewMutation = useMutation({
     mutationFn: async ({ userId, perfumeId }) => {
       const { error } = await supabase
         .from('user_ratings')
@@ -486,7 +743,7 @@ function ReviewsTab() {
         .eq('perfume_id', perfumeId)
       if (error) throw error
     },
-    onSuccess: () => queryClient.invalidateQueries(['admin-reviews']),
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ['admin-reviews'] }),
   })
 
   const deleteRatingMutation = useMutation({
@@ -498,7 +755,10 @@ function ReviewsTab() {
         .eq('perfume_id', perfumeId)
       if (error) throw error
     },
-    onSuccess: () => { queryClient.invalidateQueries(['admin-reviews']); queryClient.invalidateQueries(['admin-stats']) },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['admin-reviews'] })
+      queryClient.invalidateQueries({ queryKey: ['admin-stats'] })
+    },
   })
 
   const filtered = reviews.filter(r =>
@@ -517,17 +777,13 @@ function ReviewsTab() {
         </span>
       </div>
 
-      {isLoading ? <TableSkeleton cols={4} /> : (
+      {isLoading ? <TableSkeleton /> : (
         <div style={styles.tableWrap}>
           <table style={styles.table}>
             <thead>
               <tr>
-                <Th>Perfume</Th>
-                <Th>User</Th>
-                <Th>Score</Th>
-                <Th>Review</Th>
-                <Th>Date</Th>
-                <Th align="right">Actions</Th>
+                <Th>Perfume</Th><Th>User</Th><Th>Score</Th>
+                <Th>Review</Th><Th>Date</Th><Th align="right">Actions</Th>
               </tr>
             </thead>
             <tbody>
@@ -539,7 +795,7 @@ function ReviewsTab() {
                   <Td bold>{r.perfumes?.name}</Td>
                   <Td muted>{r.profiles?.name || 'Unknown'}</Td>
                   <td style={styles.td}>
-                    {r.score && <span style={styles.scorePill}>{r.score}/10</span>}
+                    {r.score && <span style={styles.scorePill}>{r.score}/5</span>}
                   </td>
                   <td style={{ ...styles.td, maxWidth: 320 }}>
                     <p style={styles.reviewText}>{r.review}</p>
@@ -548,28 +804,16 @@ function ReviewsTab() {
                     {r.created_at ? new Date(r.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
                   </Td>
                   <td style={{ ...styles.td, textAlign: 'right', whiteSpace: 'nowrap' }}>
-                    <button
-                      className="action-link"
-                      onClick={() => {
-                        if (window.confirm('Remove this review text? The score will be kept.')) {
-                          deleteMutation.mutate({ userId: r.user_id, perfumeId: r.perfume_id })
-                        }
-                      }}
-                      style={styles.tableAction}
-                    >
-                      Remove review
-                    </button>
-                    <button
-                      className="danger-link"
-                      onClick={() => {
-                        if (window.confirm('Delete this entire rating including score? This cannot be undone.')) {
-                          deleteRatingMutation.mutate({ userId: r.user_id, perfumeId: r.perfume_id })
-                        }
-                      }}
-                      style={{ ...styles.tableAction, color: '#9A8878' }}
-                    >
-                      Delete rating
-                    </button>
+                    <button className="action-link" onClick={() => {
+                      if (window.confirm('Remove review text? The score will be kept.')) {
+                        removeReviewMutation.mutate({ userId: r.user_id, perfumeId: r.perfume_id })
+                      }
+                    }} style={styles.tableAction}>Remove review</button>
+                    <button className="danger-link" onClick={() => {
+                      if (window.confirm('Delete entire rating including score? Cannot be undone.')) {
+                        deleteRatingMutation.mutate({ userId: r.user_id, perfumeId: r.perfume_id })
+                      }
+                    }} style={{ ...styles.tableAction, color: '#9A8878' }}>Delete rating</button>
                   </td>
                 </tr>
               ))}
@@ -580,8 +824,6 @@ function ReviewsTab() {
     </div>
   )
 }
-
-// ─── Shared UI helpers ────────────────────────────────────────────────────────
 
 function Modal({ title, onClose, children }) {
   return (
@@ -641,22 +883,25 @@ function Td({ children, bold, muted }) {
 }
 
 function ConcentrationBadge({ c }) {
-  const colors = { EDP: ['#EEEDFE','#3C3489'], EDT: ['#E1F5EE','#085041'], Parfum: ['#FAECE7','#712B13'], EDC: ['#FAEEDA','#633806'], Cologne: ['#F0E8DC','#5C4A38'] }
-  const [bg, color] = colors[c] || ['#EDE4D8','#5C4A38']
-  return <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: bg, color, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>{c}</span>
+  const map = {
+    'Eau de parfum':     { bg: '#EEEDFE', color: '#3C3489', short: 'EDP' },
+    'Eau de toilette':   { bg: '#E1F5EE', color: '#085041', short: 'EDT' },
+    'Extrait de parfum': { bg: '#FAECE7', color: '#712B13', short: 'Parfum' },
+    'Eau friche':        { bg: '#FAEEDA', color: '#633806', short: 'Fraîche' },
+  }
+  const s = map[c] || { bg: '#EDE4D8', color: '#5C4A38', short: c }
+  return <span style={{ fontSize: 11, padding: '2px 8px', borderRadius: 20, background: s.bg, color: s.color, fontFamily: "'DM Sans', sans-serif", fontWeight: 500 }}>{s.short}</span>
 }
 
-function TableSkeleton({ cols }) {
+function TableSkeleton() {
   return (
     <div style={styles.tableWrap}>
       {Array.from({ length: 5 }).map((_, i) => (
-        <div key={i} style={{ height: 48, background: i % 2 === 0 ? '#EDE4D8' : '#E8E0D4', opacity: 1 - i * 0.15, borderRadius: i === 0 ? '8px 8px 0 0' : 0 }} />
+        <div key={i} style={{ height: 48, background: i % 2 === 0 ? '#EDE4D8' : '#E8E0D4', opacity: 1 - i * 0.15 }} />
       ))}
     </div>
   )
 }
-
-// ─── Styles ───────────────────────────────────────────────────────────────────
 
 const styles = {
   page: { maxWidth: 1200, margin: '0 auto', padding: '2rem 2.5rem 4rem' },
@@ -667,13 +912,13 @@ const styles = {
   statsRow: { display: 'flex', gap: 10 },
   statCard: { background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 10, padding: '12px 18px', minWidth: 90, textAlign: 'center' },
   statLabel: { fontSize: 10, color: '#9A8878', textTransform: 'uppercase', letterSpacing: '.06em', margin: '0 0 4px', fontFamily: "'DM Sans', sans-serif" },
-  statValue: { fontFamily: "'Cormorant Garamond', serif", fontSize: 26, color: '#C4845A', margin: 0, lineHeight: 1 },
-  tabs: { display: 'flex', borderBottom: '0.5px solid #E8DDD0', marginBottom: '1.5rem', gap: 0 },
+  statValue: { fontFamily: "'Cormorant Garamond', serif", fontSize: 26, color: '#7F77DD', margin: 0, lineHeight: 1 },
+  tabs: { display: 'flex', borderBottom: '0.5px solid #E8DDD0', marginBottom: '1.5rem' },
   tab: { padding: '10px 20px', fontSize: 13, fontWeight: 400, color: '#9A8878', cursor: 'pointer', background: 'none', border: 'none', borderBottom: '2px solid transparent', fontFamily: "'DM Sans', sans-serif", transition: 'color .15s, border-color .15s' },
-  tabActive: { color: '#C4845A', borderBottomColor: '#C4845A', fontWeight: 500 },
+  tabActive: { color: '#7F77DD', borderBottomColor: '#7F77DD', fontWeight: 500 },
   tabContent: {},
   toolbar: { display: 'flex', alignItems: 'center', gap: 12, marginBottom: '1rem', flexWrap: 'wrap' },
-  primaryBtn: { padding: '8px 18px', background: '#C4845A', color: '#FDF8F2', border: 'none', borderRadius: 20, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", flexShrink: 0 },
+  primaryBtn: { padding: '8px 18px', background: '#7F77DD', color: '#FDF8F2', border: 'none', borderRadius: 20, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", flexShrink: 0 },
   searchIcon: { position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', width: 15, height: 15, color: '#9A8878' },
   searchInput: { width: '100%', padding: '7px 12px 7px 32px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#FDFAF6', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none' },
   tableWrap: { background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12, overflow: 'hidden' },
@@ -682,7 +927,11 @@ const styles = {
   td: { padding: '11px 14px', borderBottom: '0.5px solid #EDE4D8', color: '#5C4A38', fontFamily: "'DM Sans', sans-serif", transition: 'background .12s' },
   emptyCell: { padding: '2rem', textAlign: 'center', color: '#9A8878', fontSize: 13, fontFamily: "'DM Sans', sans-serif" },
   tableAction: { background: 'none', border: 'none', fontSize: 12, color: '#7A6A58', cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", padding: '2px 8px', transition: 'color .15s' },
-  scorePill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EDE4D8', color: '#C4845A', fontWeight: 500, fontFamily: "'DM Sans', sans-serif" },
+  scorePill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EDE4D8', color: '#7F77DD', fontWeight: 500, fontFamily: "'DM Sans', sans-serif" },
+  tagPill: { display: 'inline-block', fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#EDE4D8', color: '#5C4A38', fontFamily: "'DM Sans', sans-serif", fontWeight: 500, marginRight: 4, marginBottom: 2 },
+  familyPill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#E1F5EE', color: '#085041', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
+  discontinuedPill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#FAECE7', color: '#7A3020', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
+  activePill: { fontSize: 11, padding: '2px 8px', borderRadius: 20, background: '#E1F5EE', color: '#085041', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
   reviewText: { fontSize: 13, color: '#5C4A38', margin: 0, lineHeight: 1.5, fontFamily: "'DM Sans', sans-serif", overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 3, WebkitBoxOrient: 'vertical' },
   overlay: { position: 'fixed', inset: 0, background: 'rgba(44,32,24,.45)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 200, padding: '1rem' },
   modal: { background: '#FDFAF6', border: '0.5px solid #E0D4C4', borderRadius: 16, padding: '24px', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' },
@@ -695,5 +944,5 @@ const styles = {
   fieldError: { fontSize: 13, color: 'var(--color-text-danger)', background: 'var(--color-background-danger)', padding: '8px 12px', borderRadius: 8, margin: '0 0 12px', fontFamily: "'DM Sans', sans-serif" },
   modalFooter: { display: 'flex', justifyContent: 'flex-end', gap: 8, paddingTop: 16, borderTop: '0.5px solid #E8DDD0' },
   cancelBtn: { padding: '8px 18px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
-  saveBtn: { padding: '8px 18px', border: 'none', borderRadius: 20, background: '#C4845A', color: '#FDF8F2', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
+  saveBtn: { padding: '8px 18px', border: 'none', borderRadius: 20, background: '#7F77DD', color: '#FDF8F2', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", fontWeight: 500 },
 }

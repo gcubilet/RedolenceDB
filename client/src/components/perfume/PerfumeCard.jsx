@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom'
 
-const SEASON_LABELS = { 1: 'Spring', 2: 'Summer', 3: 'Autumn', 4: 'Winter' }
-const GENDER_LABELS = { 1: 'Feminine', 2: 'Unisex', 3: 'Masculine' }
+const SEASON_LABELS = { 'spring': 'Spring', 'summer': 'Summer', 'autumn': 'Autumn', 'winter': 'Winter' }
+const GENDER_LABELS = { 'feminine': 'Feminine', 'unisex': 'Unisex', 'masculine': 'Masculine' }
 
 const FAMILY_COLORS = {
   floral:    { bg: '#F5EDE8', text: '#7C4A3A' },

@@ -1,16 +1,25 @@
-const CONCENTRATIONS = ['Parfum', 'EDP', 'EDT', 'EDC', 'Cologne']
-
-const SEASONS = [
-  { value: 1, label: 'Spring' },
-  { value: 2, label: 'Summer' },
-  { value: 3, label: 'Autumn' },
-  { value: 4, label: 'Winter' },
+// Values must match the `perfumes.concentration` CHECK constraint in Supabase.
+// The short code is only used as a display label.
+const CONCENTRATIONS = [
+  { value: 'Extrait de parfum', short: 'Parfum' },
+  { value: 'Eau de parfum',     short: 'EDP' },
+  { value: 'Eau de toilette',   short: 'EDT' },
+  { value: 'Eau friche',        short: 'Fraîche' },
 ]
 
+// Season values are stored in `user_ratings.best_season` (text[]).
+const SEASONS = [
+  { value: 'Spring', label: 'Spring' },
+  { value: 'Summer', label: 'Summer' },
+  { value: 'Autumn', label: 'Autumn' },
+  { value: 'Winter', label: 'Winter' },
+]
+
+// Values must match the `user_ratings.gender_lean` CHECK constraint.
 const GENDERS = [
-  { value: 1, label: 'Feminine' },
-  { value: 2, label: 'Unisex' },
-  { value: 3, label: 'Masculine' },
+  { value: 'feminine',  label: 'Feminine' },
+  { value: 'unisex',    label: 'Unisex' },
+  { value: 'masculine', label: 'Masculine' },
 ]
 
 export default function FilterPanel({ filters, onChange, options, onClear }) {
@@ -71,14 +80,14 @@ export default function FilterPanel({ filters, onChange, options, onClear }) {
         <div style={styles.chipGroup}>
           {CONCENTRATIONS.map(c => (
             <button
-              key={c}
-              onClick={() => toggle('concentration', c)}
+              key={c.value}
+              onClick={() => toggle('concentration', c.value)}
               style={{
                 ...styles.chip,
-                ...(filters.concentration === c ? styles.chipActive : {}),
+                ...(filters.concentration === c.value ? styles.chipActive : {}),
               }}
             >
-              {c}
+              {c.short}
             </button>
           ))}
         </div>
@@ -161,7 +170,7 @@ const styles = {
     background: 'none',
     border: 'none',
     fontSize: 12,
-    color: '#C4845A',
+    color: '#7F77DD',
     cursor: 'pointer',
     padding: 0,
     fontFamily: 'var(--font-sans)',
@@ -208,8 +217,8 @@ const styles = {
     transition: 'all .15s ease',
   },
   chipActive: {
-    background: '#C4845A',
-    borderColor: '#C4845A',
+    background: '#7F77DD',
+    borderColor: '#7F77DD',
     color: '#FDF8F2',
   },
 }

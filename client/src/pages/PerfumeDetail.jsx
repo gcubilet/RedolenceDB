@@ -4,8 +4,14 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { supabase } from '../lib/supabase'
 import { useAuthStore } from '../store/useAuthStore'
 
-const SEASON_MAP = { 1: 'Spring', 2: 'Summer', 3: 'Autumn', 4: 'Winter' }
-const GENDER_MAP = { 1: 'Feminine', 2: 'Unisex', 3: 'Masculine' }
+const SEASON_MAP = { 'Spring': 'Spring', 'Summer': 'Summer', 'Autumn': 'Autumn', 'Winter': 'Winter' }
+const GENDER_MAP = {
+  feminine:           'Feminine',
+  slightly_feminine:  'Slightly feminine',
+  unisex:             'Unisex',
+  slightly_masculine: 'Slightly masculine',
+  masculine:          'Masculine',
+}
 const SILLAGE_MAP = {
   intimate: 'Intimate', moderate: 'Moderate',
   strong: 'Strong', enormous: 'Enormous'
@@ -25,9 +31,9 @@ async function fetchPerfume(id) {
       brands ( brand_id, brand_name ),
       perfume_notes (
         note_type,
-        notes ( name, scent_family, photo_url, description )
+        notes!perfume_notes_note_name_fkey ( name, scent_family, photo_url, description )
       ),
-      user_ratings ( score, sillage, longevity, gender, season, review, user_id )
+      user_ratings ( score, sillage, longevity, gender_lean, best_season, review, user_id )
     `)
     .eq('perfume_id', id)
     .single()
@@ -36,16 +42,20 @@ async function fetchPerfume(id) {
 }
 
 async function fetchLayeringPairs(id) {
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from('layering_pairs')
     .select(`
-      *,
+      id, perfume_a_id, perfume_b_id, votes, avg_score, description,
       perfume_a:perfumes!layering_pairs_perfume_a_id_fkey ( perfume_id, name, image_url, brands(brand_name) ),
       perfume_b:perfumes!layering_pairs_perfume_b_id_fkey ( perfume_id, name, image_url, brands(brand_name) )
     `)
     .or(`perfume_a_id.eq.${id},perfume_b_id.eq.${id}`)
     .order('votes', { ascending: false })
-    .limit(4)
+    .limit(6)
+  if (error) {
+    console.error('Layering fetch error:', error)
+    return []
+  }
   return (data || []).map(pair => ({
     ...pair,
     other: String(pair.perfume_a_id) === String(id) ? pair.perfume_b : pair.perfume_a,
@@ -61,6 +71,18 @@ async function fetchUserRating(perfumeId, userId) {
     .eq('user_id', userId)
     .single()
   return data || null
+}
+
+// Search all perfumes except the current one for the layering picker
+async function searchPerfumes(query, excludeId) {
+  if (!query || query.length < 2) return []
+  const { data } = await supabase
+    .from('perfumes')
+    .select('perfume_id, name, image_url, brands(brand_name)')
+    .ilike('name', `%${query}%`)
+    .neq('perfume_id', excludeId)
+    .limit(8)
+  return data || []
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -79,9 +101,11 @@ function modeOf(arr) {
 }
 
 function groupNotes(perfumeNotes) {
-  const groups = { top: [], middle: [], base: [] }
+  const groups = { top: [], middle: [], base: [], other: [] }
   ;(perfumeNotes || []).forEach(pn => {
-    if (groups[pn.note_type]) groups[pn.note_type].push(pn.notes)
+    if (!pn?.notes) return
+    const tier = pn.note_type && groups[pn.note_type] ? pn.note_type : 'other'
+    groups[tier].push(pn.notes)
   })
   return groups
 }
@@ -94,6 +118,43 @@ export default function PerfumeDetail() {
   const { user } = useAuthStore()
   const queryClient = useQueryClient()
   const [ratingOpen, setRatingOpen] = useState(false)
+
+  const { data: isWishlisted } = useQuery({
+    queryKey: ['wishlist-check', id, user?.id],
+    queryFn: async () => {
+      if (!user) return false
+      const { data } = await supabase
+        .from('wishlists')
+        .select('perfume_id')
+        .eq('user_id', user.id)
+        .eq('perfume_id', id)
+        .single()
+      return !!data
+    },
+    enabled: !!user,
+  })
+
+  const wishlistMutation = useMutation({
+    mutationFn: async () => {
+      if (isWishlisted) {
+        const { error } = await supabase
+          .from('wishlists')
+          .delete()
+          .eq('user_id', user.id)
+          .eq('perfume_id', id)
+        if (error) throw error
+      } else {
+        const { error } = await supabase
+          .from('wishlists')
+          .upsert({ user_id: user.id, perfume_id: id }, { onConflict: 'user_id,perfume_id' })
+        if (error) throw error
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['wishlist-check', id, user?.id])
+      queryClient.invalidateQueries(['wishlist', user?.id])
+    },
+  })
 
   const { data: perfume, isLoading, isError } = useQuery({
     queryKey: ['perfume', id],
@@ -113,16 +174,55 @@ export default function PerfumeDetail() {
   })
 
   const ratingMutation = useMutation({
-    mutationFn: async (values) => {
-      const payload = { ...values, perfume_id: id, user_id: user.id }
+    mutationFn: async ({ ratingValues, layeringPair }) => {
+      // Save the rating
+      const payload = { ...ratingValues, perfume_id: id, user_id: user.id }
       const { error } = await supabase
         .from('user_ratings')
         .upsert(payload, { onConflict: 'user_id,perfume_id' })
       if (error) throw error
+
+      // Save layering pair if one was selected
+      if (layeringPair) {
+        const currentId = parseInt(id)
+        const otherId   = parseInt(layeringPair.perfume_id)
+        const a = Math.min(currentId, otherId)
+        const b = Math.max(currentId, otherId)
+
+        // Check if pair already exists
+        const { data: existing } = await supabase
+          .from('layering_pairs')
+          .select('id, votes')
+          .eq('perfume_a_id', a)
+          .eq('perfume_b_id', b)
+          .single()
+
+        if (existing) {
+          // Increment votes on existing pair
+          const { error: voteErr } = await supabase
+            .from('layering_pairs')
+            .update({ votes: existing.votes + 1 })
+            .eq('id', existing.id)
+          if (voteErr) throw voteErr
+        } else {
+          // Insert new pair
+          const { error: insertErr } = await supabase
+            .from('layering_pairs')
+            .insert({
+              perfume_a_id: a,
+              perfume_b_id: b,
+              votes: 1,
+              avg_score: 5.0,
+              description: layeringPair.description || null,
+            })
+          if (insertErr) throw insertErr
+        }
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries(['perfume', id])
       queryClient.invalidateQueries(['my-rating', id, user?.id])
+      queryClient.invalidateQueries(['layering', id])
       setRatingOpen(false)
     },
   })
@@ -141,8 +241,10 @@ export default function PerfumeDetail() {
 
   const score = avgScore(perfume.user_ratings)
   const commonSillage = modeOf(perfume.user_ratings?.map(r => r.sillage))
-  const commonGender  = modeOf(perfume.user_ratings?.map(r => String(r.gender)))
-  const commonSeason  = modeOf(perfume.user_ratings?.map(r => String(r.season)))
+  const commonGender  = modeOf(perfume.user_ratings?.map(r => r.gender_lean))
+  const commonSeason  = modeOf(
+    (perfume.user_ratings || []).flatMap(r => Array.isArray(r.best_season) ? r.best_season : [])
+  )
   const notes = groupNotes(perfume.perfume_notes)
   const reviews = (perfume.user_ratings || []).filter(r => r.review)
 
@@ -153,8 +255,10 @@ export default function PerfumeDetail() {
         * { box-sizing: border-box; }
         body { background: #F7F2EC; font-family: 'DM Sans', sans-serif; }
         .note-card:hover { border-color: #D4B89A !important; transform: translateY(-2px); }
-        .layer-card:hover { border-color: #C4845A !important; }
+        .layer-card:hover { border-color: #7F77DD !important; }
         .action-btn:hover { opacity: .85; }
+        .pair-result:hover { background: #F0E8DC !important; }
+        .upvote-btn:not(:disabled):hover { background: #EEEDFE !important; border-color: #A9A3E8 !important; color: #5C56B8 !important; }
         @keyframes fadeUp { from { opacity:0; transform:translateY(10px); } to { opacity:1; transform:translateY(0); } }
       `}</style>
 
@@ -172,7 +276,6 @@ export default function PerfumeDetail() {
 
         {/* Hero */}
         <div style={styles.hero}>
-          {/* Image */}
           <div style={styles.imageCol}>
             <div style={styles.imageWrap}>
               {perfume.image_url
@@ -185,7 +288,6 @@ export default function PerfumeDetail() {
             </div>
           </div>
 
-          {/* Info */}
           <div style={styles.infoCol}>
             <Link to={`/brand/${perfume.brands?.brand_id}`} style={styles.brandLink}>
               {perfume.brands?.brand_name}
@@ -199,20 +301,18 @@ export default function PerfumeDetail() {
               </p>
             )}
 
-            {/* Score */}
             {score && (
               <div style={styles.scoreRow}>
                 <div style={styles.scoreBig}>{score}</div>
                 <div>
                   <StarRow score={parseFloat(score)} />
                   <p style={styles.ratingCount}>
-                    {perfume.user_ratings?.length} {perfume.user_ratings?.length === 1 ? 'rating' : 'ratings'}
+                    {perfume.user_ratings?.length} {perfume.user_ratings?.length === 1 ? 'rating' : 'ratings'} · out of 5
                   </p>
                 </div>
               </div>
             )}
 
-            {/* Community profile badges */}
             <div style={styles.badgeRow}>
               {commonSillage && <Badge label="Sillage" value={SILLAGE_MAP[commonSillage]} />}
               {commonGender  && <Badge label="Gender" value={GENDER_MAP[commonGender]} />}
@@ -223,7 +323,6 @@ export default function PerfumeDetail() {
               <p style={styles.description}>{perfume.description}</p>
             )}
 
-            {/* Actions */}
             <div style={styles.actions}>
               {user ? (
                 <>
@@ -242,17 +341,28 @@ export default function PerfumeDetail() {
                   >
                     {myRating ? 'Edit rating' : 'Rate this'}
                   </button>
+                  <button
+                    className="action-btn"
+                    onClick={() => wishlistMutation.mutate()}
+                    style={isWishlisted ? styles.wishlistBtnActive : styles.secondaryBtn}
+                    disabled={wishlistMutation.isPending}
+                  >
+                    {isWishlisted ? '♥ Wishlisted' : '♡ Add to wishlist'}
+                  </button>
                 </>
               ) : (
                 <Link to="/login" style={styles.primaryBtn}>Sign in to rate & collect</Link>
               )}
             </div>
 
-            {/* Inline rating form */}
             {ratingOpen && user && (
               <RatingForm
                 initial={myRating}
-                onSubmit={(values) => ratingMutation.mutate(values)}
+                currentPerfumeId={id}
+                currentPerfumeName={perfume.name}
+                onSubmit={(ratingValues, layeringPair) =>
+                  ratingMutation.mutate({ ratingValues, layeringPair })
+                }
                 onCancel={() => setRatingOpen(false)}
                 loading={ratingMutation.isPending}
               />
@@ -263,34 +373,49 @@ export default function PerfumeDetail() {
         {/* Notes section */}
         <section style={styles.section}>
           <h2 style={styles.sectionTitle}>Fragrance notes</h2>
-          <div style={styles.noteTiers}>
-            {[['top', 'Top notes'], ['middle', 'Heart notes'], ['base', 'Base notes']].map(([tier, label]) => (
-              notes[tier].length > 0 && (
-                <div key={tier}>
-                  <p style={styles.noteTierLabel}>{label}</p>
-                  <div style={styles.noteGrid}>
-                    {notes[tier].map((note, i) => (
-                      <NoteCard key={i} note={note} />
-                    ))}
+          {(notes.top.length + notes.middle.length + notes.base.length + notes.other.length) === 0 ? (
+            <p style={styles.sectionSub}>No notes recorded yet for this fragrance.</p>
+          ) : (
+            <div style={styles.noteTiers}>
+              {[
+                ['top',    'Top notes'],
+                ['middle', 'Heart notes'],
+                ['base',   'Base notes'],
+                ['other',  'Other notes'],
+              ].map(([tier, label]) => (
+                notes[tier].length > 0 && (
+                  <div key={tier}>
+                    <p style={styles.noteTierLabel}>{label}</p>
+                    <div style={styles.noteGrid}>
+                      {notes[tier].map((note, i) => (
+                        <NoteCard key={i} note={note} />
+                      ))}
+                    </div>
                   </div>
-                </div>
-              )
-            ))}
-          </div>
+                )
+              ))}
+            </div>
+          )}
         </section>
 
         {/* Layering recommendations */}
-        {pairs.length > 0 && (
-          <section style={styles.section}>
-            <h2 style={styles.sectionTitle}>Layer with</h2>
-            <p style={styles.sectionSub}>Community-recommended pairings for {perfume.name}</p>
-            <div style={styles.layerGrid}>
-              {pairs.map((pair, i) => (
-                <LayerCard key={i} pair={pair} />
-              ))}
-            </div>
-          </section>
-        )}
+        <section style={styles.section}>
+          <h2 style={styles.sectionTitle}>Layer with</h2>
+          {pairs.length > 0 ? (
+            <>
+              <p style={styles.sectionSub}>Community-recommended pairings for {perfume.name}</p>
+              <div style={styles.layerGrid}>
+                {pairs.map((pair, i) => (
+                  <LayerCard key={i} pair={pair} user={user} queryClient={queryClient} currentPerfumeId={id} />
+                ))}
+              </div>
+            </>
+          ) : (
+            <p style={styles.sectionSub}>
+              No layering pairings recorded yet for {perfume.name}.
+            </p>
+          )}
+        </section>
 
         {/* Reviews */}
         {reviews.length > 0 && (
@@ -302,9 +427,11 @@ export default function PerfumeDetail() {
                   <div style={styles.reviewMeta}>
                     <StarRow score={r.score} small />
                     <div style={styles.reviewBadges}>
-                      {r.sillage  && <MiniTag>{SILLAGE_MAP[r.sillage]}</MiniTag>}
-                      {r.gender   && <MiniTag>{GENDER_MAP[r.gender]}</MiniTag>}
-                      {r.season   && <MiniTag>{SEASON_MAP[r.season]}</MiniTag>}
+                      {r.sillage     && <MiniTag>{SILLAGE_MAP[r.sillage]}</MiniTag>}
+                      {r.gender_lean && <MiniTag>{GENDER_MAP[r.gender_lean]}</MiniTag>}
+                      {Array.isArray(r.best_season) && r.best_season.length > 0 && (
+                        <MiniTag>{r.best_season.map(s => SEASON_MAP[s] || s).join(', ')}</MiniTag>
+                      )}
                     </div>
                   </div>
                   <p style={styles.reviewText}>{r.review}</p>
@@ -335,8 +462,40 @@ function NoteCard({ note }) {
   )
 }
 
-function LayerCard({ pair }) {
+function LayerCard({ pair, user, queryClient, currentPerfumeId }) {
   const navigate = useNavigate()
+  const [votes, setVotes] = useState(pair.votes)
+  const [voted, setVoted] = useState(false)
+
+  const upvoteMutation = useMutation({
+    mutationFn: async () => {
+      const { error } = await supabase
+        .from('layering_pairs')
+        .update({ votes: votes + 1 })
+        .eq('id', pair.id)
+      if (error) throw error
+    },
+    onMutate: () => {
+      // Optimistic update
+      setVotes(v => v + 1)
+      setVoted(true)
+    },
+    onError: () => {
+      // Roll back
+      setVotes(v => v - 1)
+      setVoted(false)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries(['layering', currentPerfumeId])
+    },
+  })
+
+  function handleUpvote(e) {
+    e.stopPropagation()
+    if (!user || voted || upvoteMutation.isPending) return
+    upvoteMutation.mutate()
+  }
+
   return (
     <div
       className="layer-card"
@@ -353,8 +512,23 @@ function LayerCard({ pair }) {
         <p style={styles.layerBrand}>{pair.other?.brands?.brand_name}</p>
         <p style={styles.layerName}>{pair.other?.name}</p>
         {pair.description && <p style={styles.layerDesc}>{pair.description}</p>}
-        <p style={styles.layerVotes}>{pair.votes} {pair.votes === 1 ? 'vote' : 'votes'}</p>
       </div>
+      {/* Upvote tab */}
+      <button
+        onClick={handleUpvote}
+        disabled={!user || voted || upvoteMutation.isPending}
+        title={!user ? 'Sign in to upvote' : voted ? 'Upvoted!' : 'Upvote this pairing'}
+        style={{
+          ...styles.upvoteBtn,
+          ...(voted ? styles.upvoteBtnActive : {}),
+          ...(!user ? { opacity: 0.5, cursor: 'default' } : {}),
+        }}
+      >
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M5 8V2M2 5l3-3 3 3" />
+        </svg>
+        <span>{votes}</span>
+      </button>
     </div>
   )
 }
@@ -380,7 +554,7 @@ function StarRow({ score, small }) {
         <svg key={i} width={size} height={size} viewBox="0 0 16 16">
           <path
             d="M8 1l1.85 3.75L14 5.5l-3 2.92.71 4.13L8 10.5l-3.71 1.95.71-4.13L2 5.5l4.15-.75z"
-            fill={i <= Math.round(score / 2) ? '#C4845A' : '#E8DDD0'}
+            fill={i <= Math.round(score) ? '#7F77DD' : '#E8DDD0'}
           />
         </svg>
       ))}
@@ -388,25 +562,177 @@ function StarRow({ score, small }) {
   )
 }
 
-function RatingForm({ initial, onSubmit, onCancel, loading }) {
+// ─── Layering picker ──────────────────────────────────────────────────────────
+
+function LayeringPicker({ currentPerfumeId, currentPerfumeName, selected, onSelect, onClear }) {
+  const [query, setQuery]     = useState('')
+  const [results, setResults] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [open, setOpen]       = useState(false)
+  const [description, setDescription] = useState('')
+
+  async function handleSearch(q) {
+    setQuery(q)
+    if (q.length < 2) { setResults([]); return }
+    setLoading(true)
+    const data = await searchPerfumes(q, currentPerfumeId)
+    setResults(data)
+    setLoading(false)
+  }
+
+  function pickResult(p) {
+    onSelect({ ...p, description })
+    setQuery(p.name)
+    setResults([])
+    setOpen(false)
+  }
+
+  function clear() {
+    onClear()
+    setQuery('')
+    setDescription('')
+    setResults([])
+  }
+
+  return (
+    <div style={styles.layeringPicker}>
+      <div style={styles.layeringPickerHeader}>
+        <span style={styles.layeringPickerIcon}>🫧</span>
+        <div>
+          <p style={styles.layeringPickerTitle}>Layer with another perfume?</p>
+          <p style={styles.layeringPickerSub}>
+            Suggest a pairing for {currentPerfumeName} — your vote helps the community discover great combinations.
+          </p>
+        </div>
+      </div>
+
+      {selected ? (
+        <div style={styles.selectedPair}>
+          <div style={styles.selectedPairImg}>
+            {selected.image_url
+              ? <img src={selected.image_url} alt={selected.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }} />
+              : <span style={{ fontSize: 16 }}>🫧</span>
+            }
+          </div>
+          <div style={{ flex: 1 }}>
+            <p style={styles.selectedPairBrand}>{selected.brands?.brand_name}</p>
+            <p style={styles.selectedPairName}>{selected.name}</p>
+          </div>
+          <button onClick={clear} style={styles.clearPairBtn}>✕</button>
+        </div>
+      ) : (
+        <div style={{ position: 'relative' }}>
+          <input
+            value={query}
+            onChange={e => handleSearch(e.target.value)}
+            onFocus={() => setOpen(true)}
+            placeholder="Search for a perfume to pair with…"
+            style={styles.pairSearchInput}
+          />
+          {loading && (
+            <span style={styles.pairSearchSpinner}>…</span>
+          )}
+          {open && results.length > 0 && (
+            <div style={styles.pairResults}>
+              {results.map(p => (
+                <button
+                  key={p.perfume_id}
+                  className="pair-result"
+                  onClick={() => pickResult(p)}
+                  style={styles.pairResult}
+                >
+                  <div style={styles.pairResultImg}>
+                    {p.image_url
+                      ? <img src={p.image_url} alt={p.name} style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 4 }} />
+                      : <span style={{ fontSize: 12 }}>🫧</span>
+                    }
+                  </div>
+                  <div>
+                    <p style={styles.pairResultBrand}>{p.brands?.brand_name}</p>
+                    <p style={styles.pairResultName}>{p.name}</p>
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      {selected && (
+        <input
+          value={description}
+          onChange={e => {
+            setDescription(e.target.value)
+            onSelect({ ...selected, description: e.target.value })
+          }}
+          placeholder="Why do these layer well? (optional)"
+          style={{ ...styles.pairSearchInput, marginTop: 8 }}
+        />
+      )}
+    </div>
+  )
+}
+
+// ─── Rating form ──────────────────────────────────────────────────────────────
+
+function RatingForm({ initial, currentPerfumeId, currentPerfumeName, onSubmit, onCancel, loading }) {
+  const initialSeason = Array.isArray(initial?.best_season)
+    ? (initial.best_season[0] || '')
+    : (initial?.best_season || '')
+
   const [values, setValues] = useState({
-    score:    initial?.score    || 7,
-    sillage:  initial?.sillage  || 'moderate',
-    longevity:initial?.longevity|| 'moderate',
-    gender:   initial?.gender   || 2,
-    season:   initial?.season   || '',
-    review:   initial?.review   || '',
+    score:       initial?.score       || 3,
+    sillage:     initial?.sillage     || 'moderate',
+    longevity:   initial?.longevity   || 'moderate',
+    gender_lean: initial?.gender_lean || 'unisex',
+    best_season: initialSeason,
+    review:      initial?.review      || '',
   })
+  const [layeringPair, setLayeringPair] = useState(null)
   const set = (k, v) => setValues(p => ({ ...p, [k]: v }))
+
+  const [hovered, setHovered] = useState(null)
+
+  function handleSubmit() {
+    onSubmit(
+      {
+        ...values,
+        review:      values.review.trim() || null,
+        best_season: values.best_season ? [values.best_season] : null,
+      },
+      layeringPair
+    )
+  }
 
   return (
     <div style={styles.ratingForm}>
       <p style={styles.ratingFormTitle}>Your rating</p>
 
       <div style={styles.ratingRow}>
-        <label style={styles.ratingLabel}>Score: <strong>{values.score}/10</strong></label>
-        <input type="range" min={1} max={10} step={1} value={values.score}
-          onChange={e => set('score', parseInt(e.target.value))} style={{ flex: 1 }} />
+        <label style={styles.ratingLabel}>Score</label>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          {[1, 2, 3, 4, 5].map(i => (
+            <button
+              key={i}
+              type="button"
+              onClick={() => set('score', i)}
+              onMouseEnter={() => setHovered(i)}
+              onMouseLeave={() => setHovered(null)}
+              style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 2, lineHeight: 1 }}
+            >
+              <svg width="22" height="22" viewBox="0 0 16 16">
+                <path
+                  d="M8 1l1.85 3.75L14 5.5l-3 2.92.71 4.13L8 10.5l-3.71 1.95.71-4.13L2 5.5l4.15-.75z"
+                  fill={i <= (hovered ?? values.score) ? '#7F77DD' : '#E8DDD0'}
+                  style={{ transition: 'fill .1s' }}
+                />
+              </svg>
+            </button>
+          ))}
+          <span style={{ fontSize: 12, color: '#9A8878', marginLeft: 6, fontFamily: "'DM Sans', sans-serif" }}>
+            {(hovered ?? values.score)}/5
+          </span>
+        </div>
       </div>
 
       <div style={styles.ratingGrid}>
@@ -424,13 +750,13 @@ function RatingForm({ initial, onSubmit, onCancel, loading }) {
         </div>
         <div>
           <label style={styles.ratingLabel}>Gender lean</label>
-          <select value={values.gender} onChange={e => set('gender', parseInt(e.target.value))} style={styles.ratingSelect}>
+          <select value={values.gender_lean} onChange={e => set('gender_lean', e.target.value)} style={styles.ratingSelect}>
             {Object.entries(GENDER_MAP).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
         </div>
         <div>
           <label style={styles.ratingLabel}>Best season</label>
-          <select value={values.season} onChange={e => set('season', parseInt(e.target.value))} style={styles.ratingSelect}>
+          <select value={values.best_season} onChange={e => set('best_season', e.target.value)} style={styles.ratingSelect}>
             <option value="">–</option>
             {Object.entries(SEASON_MAP).map(([v, l]) => <option key={v} value={v}>{l}</option>)}
           </select>
@@ -445,9 +771,18 @@ function RatingForm({ initial, onSubmit, onCancel, loading }) {
         style={styles.reviewInput}
       />
 
+      {/* Layering suggestion */}
+      <LayeringPicker
+        currentPerfumeId={currentPerfumeId}
+        currentPerfumeName={currentPerfumeName}
+        selected={layeringPair}
+        onSelect={setLayeringPair}
+        onClear={() => setLayeringPair(null)}
+      />
+
       <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', marginTop: 12 }}>
         <button onClick={onCancel} style={styles.cancelBtn}>Cancel</button>
-        <button onClick={() => onSubmit(values)} disabled={loading} style={styles.submitRatingBtn}>
+        <button onClick={handleSubmit} disabled={loading} style={styles.submitRatingBtn}>
           {loading ? 'Saving…' : 'Save rating'}
         </button>
       </div>
@@ -470,10 +805,10 @@ function LoadingSkeleton() {
   return (
     <div style={{ maxWidth: 1100, margin: '2rem auto', padding: '0 2.5rem' }}>
       <div style={{ display: 'grid', gridTemplateColumns: '380px 1fr', gap: '3rem' }}>
-        <div style={{ background: '#EDE4D8', borderRadius: 16, aspectRatio: '3/4' }} className="skeleton" />
+        <div style={{ background: '#EDE4D8', borderRadius: 16, aspectRatio: '3/4' }} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, paddingTop: '1rem' }}>
           {[80, 200, 120, 160, 100].map((w, i) => (
-            <div key={i} style={{ height: i === 1 ? 40 : 16, width: w, background: '#EDE4D8', borderRadius: 4 }} className="skeleton" />
+            <div key={i} style={{ height: i === 1 ? 40 : 16, width: w, background: '#EDE4D8', borderRadius: 4 }} />
           ))}
         </div>
       </div>
@@ -485,7 +820,7 @@ function ErrorState({ onBack }) {
   return (
     <div style={{ textAlign: 'center', padding: '6rem 2rem' }}>
       <p style={{ fontFamily: "'Cormorant Garamond', serif", fontSize: 24, color: '#2C2018' }}>Perfume not found</p>
-      <button onClick={onBack} style={{ marginTop: 16, padding: '8px 20px', background: '#C4845A', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer' }}>
+      <button onClick={onBack} style={{ marginTop: 16, padding: '8px 20px', background: '#7F77DD', color: '#fff', border: 'none', borderRadius: 20, cursor: 'pointer' }}>
         Back to catalogue
       </button>
     </div>
@@ -510,7 +845,7 @@ const styles = {
   title: { fontFamily: "'Cormorant Garamond', Georgia, serif", fontSize: 'clamp(28px, 4vw, 44px)', fontWeight: 400, color: '#2C2018', margin: 0, lineHeight: 1.1 },
   meta: { fontSize: 13, color: '#9A8878', margin: 0, fontFamily: "'DM Sans', sans-serif" },
   scoreRow: { display: 'flex', alignItems: 'center', gap: 14 },
-  scoreBig: { fontFamily: "'Cormorant Garamond', serif", fontSize: 48, fontWeight: 300, color: '#C4845A', lineHeight: 1 },
+  scoreBig: { fontFamily: "'Cormorant Garamond', serif", fontSize: 48, fontWeight: 300, color: '#7F77DD', lineHeight: 1 },
   ratingCount: { fontSize: 12, color: '#9A8878', margin: '4px 0 0', fontFamily: "'DM Sans', sans-serif" },
   badgeRow: { display: 'flex', flexWrap: 'wrap', gap: 8 },
   badge: { background: '#EDE4D8', borderRadius: 10, padding: '8px 14px', display: 'flex', flexDirection: 'column', gap: 2 },
@@ -518,8 +853,9 @@ const styles = {
   badgeValue: { fontSize: 13, fontWeight: 500, color: '#2C2018', fontFamily: "'DM Sans', sans-serif" },
   description: { fontSize: 14, color: '#5C4A38', lineHeight: 1.7, margin: 0, fontFamily: "'DM Sans', sans-serif" },
   actions: { display: 'flex', gap: 10, flexWrap: 'wrap' },
-  primaryBtn: { padding: '10px 20px', background: '#C4845A', color: '#FDF8F2', border: 'none', borderRadius: 24, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", textDecoration: 'none', display: 'inline-block' },
+  primaryBtn: { padding: '10px 20px', background: '#7F77DD', color: '#FDF8F2', border: 'none', borderRadius: 24, fontSize: 13, fontWeight: 500, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif", textDecoration: 'none', display: 'inline-block' },
   secondaryBtn: { padding: '10px 20px', background: 'transparent', color: '#5C4A38', border: '0.5px solid #E0D4C4', borderRadius: 24, fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
+  wishlistBtnActive: { padding: '10px 20px', background: '#F5EDE8', color: '#C4845A', border: '0.5px solid #C4845A', borderRadius: 24, fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
   section: { marginBottom: '3rem' },
   sectionTitle: { fontFamily: "'Cormorant Garamond', serif", fontSize: 28, fontWeight: 400, color: '#2C2018', margin: '0 0 6px' },
   sectionSub: { fontSize: 13, color: '#9A8878', margin: '0 0 20px', fontFamily: "'DM Sans', sans-serif" },
@@ -531,13 +867,15 @@ const styles = {
   noteName: { fontSize: 12, fontWeight: 500, color: '#2C2018', margin: 0, textAlign: 'center', fontFamily: "'DM Sans', sans-serif" },
   noteFamily: { fontSize: 10, color: '#9A8878', margin: 0, fontFamily: "'DM Sans', sans-serif" },
   layerGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem' },
-  layerCard: { display: 'flex', gap: 12, padding: '14px', background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12, cursor: 'pointer', transition: 'border-color .15s', alignItems: 'flex-start' },
+  layerCard: { display: 'flex', gap: 12, padding: '14px', background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12, cursor: 'pointer', transition: 'border-color .15s', alignItems: 'center' },
   layerImg: { width: 56, height: 56, borderRadius: 8, background: '#EDE4D8', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
   layerInfo: { flex: 1, minWidth: 0 },
   layerBrand: { fontSize: 10, color: '#9A8878', margin: '0 0 2px', textTransform: 'uppercase', letterSpacing: '.06em', fontFamily: "'DM Sans', sans-serif" },
   layerName: { fontSize: 13, fontWeight: 500, color: '#2C2018', margin: '0 0 4px', fontFamily: "'Cormorant Garamond', serif" },
   layerDesc: { fontSize: 12, color: '#7A6A58', margin: '0 0 4px', fontFamily: "'DM Sans', sans-serif" },
   layerVotes: { fontSize: 11, color: '#9A8878', margin: 0, fontFamily: "'DM Sans', sans-serif" },
+  upvoteBtn: { display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 3, flexShrink: 0, padding: '6px 8px', borderRadius: 8, border: '0.5px solid #E0D4C4', background: '#F5F0E8', color: '#9A8878', cursor: 'pointer', fontSize: 11, fontFamily: "'DM Sans', sans-serif", fontWeight: 500, transition: 'all .15s', lineHeight: 1 },
+  upvoteBtnActive: { background: '#EEEDFE', border: '0.5px solid #A9A3E8', color: '#5C56B8' },
   reviewList: { display: 'flex', flexDirection: 'column', gap: '1rem' },
   reviewCard: { padding: '16px 20px', background: '#FDFAF6', border: '0.5px solid #E8DDD0', borderRadius: 12 },
   reviewMeta: { display: 'flex', alignItems: 'center', gap: 10, marginBottom: 8, flexWrap: 'wrap' },
@@ -552,5 +890,23 @@ const styles = {
   ratingSelect: { width: '100%', padding: '6px 8px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#FDFAF6', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", marginTop: 4 },
   reviewInput: { width: '100%', padding: '8px 10px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#FDFAF6', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", resize: 'vertical' },
   cancelBtn: { padding: '7px 16px', border: '0.5px solid #E0D4C4', borderRadius: 20, background: 'none', color: '#5C4A38', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
-  submitRatingBtn: { padding: '7px 16px', border: 'none', borderRadius: 20, background: '#C4845A', color: '#fff', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
+  submitRatingBtn: { padding: '7px 16px', border: 'none', borderRadius: 20, background: '#7F77DD', color: '#fff', fontSize: 13, cursor: 'pointer', fontFamily: "'DM Sans', sans-serif" },
+  // Layering picker
+  layeringPicker: { marginTop: 16, padding: '14px', background: '#F5F0E8', border: '0.5px solid #E0D4C4', borderRadius: 10 },
+  layeringPickerHeader: { display: 'flex', gap: 10, alignItems: 'flex-start', marginBottom: 12 },
+  layeringPickerIcon: { fontSize: 20, lineHeight: 1, marginTop: 1, flexShrink: 0 },
+  layeringPickerTitle: { fontSize: 13, fontWeight: 500, color: '#2C2018', margin: '0 0 2px', fontFamily: "'DM Sans', sans-serif" },
+  layeringPickerSub: { fontSize: 12, color: '#9A8878', margin: 0, fontFamily: "'DM Sans', sans-serif", lineHeight: 1.5 },
+  pairSearchInput: { width: '100%', padding: '7px 10px', border: '0.5px solid #E0D4C4', borderRadius: 8, background: '#fff', color: '#2C2018', fontSize: 13, fontFamily: "'DM Sans', sans-serif", outline: 'none' },
+  pairSearchSpinner: { position: 'absolute', right: 10, top: '50%', transform: 'translateY(-50%)', color: '#9A8878', fontSize: 13 },
+  pairResults: { position: 'absolute', top: 'calc(100% + 4px)', left: 0, right: 0, background: '#FDFAF6', border: '0.5px solid #E0D4C4', borderRadius: 10, zIndex: 50, overflow: 'hidden', boxShadow: '0 4px 16px rgba(44,32,24,.1)' },
+  pairResult: { display: 'flex', alignItems: 'center', gap: 10, width: '100%', padding: '9px 12px', background: 'none', border: 'none', cursor: 'pointer', textAlign: 'left', transition: 'background .12s' },
+  pairResultImg: { width: 32, height: 32, borderRadius: 4, background: '#EDE4D8', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  pairResultBrand: { fontSize: 10, color: '#9A8878', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '.05em', fontFamily: "'DM Sans', sans-serif" },
+  pairResultName: { fontSize: 13, color: '#2C2018', margin: 0, fontFamily: "'Cormorant Garamond', serif", fontWeight: 500 },
+  selectedPair: { display: 'flex', alignItems: 'center', gap: 10, padding: '8px 10px', background: '#fff', border: '0.5px solid #C8BFD8', borderRadius: 8 },
+  selectedPairImg: { width: 36, height: 36, borderRadius: 6, background: '#EDE4D8', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' },
+  selectedPairBrand: { fontSize: 10, color: '#9A8878', margin: '0 0 1px', textTransform: 'uppercase', letterSpacing: '.05em', fontFamily: "'DM Sans', sans-serif" },
+  selectedPairName: { fontSize: 13, color: '#2C2018', margin: 0, fontFamily: "'Cormorant Garamond', serif", fontWeight: 500 },
+  clearPairBtn: { background: 'none', border: 'none', color: '#9A8878', cursor: 'pointer', fontSize: 13, padding: '2px 4px', marginLeft: 'auto', flexShrink: 0 },
 }

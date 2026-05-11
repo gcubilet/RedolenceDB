@@ -3,6 +3,19 @@ import { usePerfumes, useFilterOptions } from '../hooks/usePerfumes'
 import PerfumeCard from '../components/perfume/PerfumeCard'
 import FilterPanel from '../components/ui/FilterPanel'
 
+const CONCENTRATION_SHORT = {
+  'Extrait de parfum': 'Parfum',
+  'Eau de parfum':     'EDP',
+  'Eau de toilette':   'EDT',
+  'Eau friche':        'Fraîche',
+}
+
+const GENDER_LABELS = {
+  feminine:  'Feminine',
+  unisex:    'Unisex',
+  masculine: 'Masculine',
+}
+
 const SORT_OPTIONS = [
   { value: 'name_asc',    label: 'Name A–Z' },
   { value: 'name_desc',   label: 'Name Z–A' },
@@ -102,7 +115,7 @@ export default function Catalogue() {
         {/* Hero header */}
         <header style={styles.hero}>
           <p style={styles.heroEyebrow}>Fragrance catalogue</p>
-          <h1 style={styles.heroTitle}>Discover your next<br /><em>signature scent</em></h1>
+          <h1 style={styles.heroTitle}>Discover your next signature scent</h1>
           <p style={styles.heroSub}>
             {isLoading ? '…' : `${perfumes.length} fragrances`}
           </p>
@@ -150,10 +163,10 @@ export default function Catalogue() {
         {activeFilterCount > 0 && (
           <div style={styles.activePills}>
             {search && <ActivePill label={`"${search}"`} onRemove={() => setSearch('')} />}
-            {filters.concentration && <ActivePill label={filters.concentration} onRemove={() => setFilters(f => ({ ...f, concentration: '' }))} />}
+            {filters.concentration && <ActivePill label={CONCENTRATION_SHORT[filters.concentration] || filters.concentration} onRemove={() => setFilters(f => ({ ...f, concentration: '' }))} />}
             {filters.note_family && <ActivePill label={filters.note_family} onRemove={() => setFilters(f => ({ ...f, note_family: '' }))} />}
-            {filters.season && <ActivePill label={['','Spring','Summer','Autumn','Winter'][filters.season]} onRemove={() => setFilters(f => ({ ...f, season: '' }))} />}
-            {filters.gender && <ActivePill label={['','Feminine','Unisex','Masculine'][filters.gender]} onRemove={() => setFilters(f => ({ ...f, gender: '' }))} />}
+            {filters.season && <ActivePill label={filters.season} onRemove={() => setFilters(f => ({ ...f, season: '' }))} />}
+            {filters.gender && <ActivePill label={GENDER_LABELS[filters.gender] || filters.gender} onRemove={() => setFilters(f => ({ ...f, gender: '' }))} />}
             {filters.brand_id && <ActivePill label={options?.brands?.find(b => String(b.brand_id) === String(filters.brand_id))?.brand_name || 'Brand'} onRemove={() => setFilters(f => ({ ...f, brand_id: '' }))} />}
             <button onClick={clearFilters} style={styles.clearAllBtn}>Clear all</button>
           </div>
@@ -260,7 +273,7 @@ const styles = {
   },
   heroTitle: {
     fontFamily: "'Cormorant Garamond', Georgia, serif",
-    fontSize: 'clamp(32px, 5vw, 52px)',
+    fontSize: 'clamp(32px, 5vw, 32px)',
     fontWeight: 300,
     color: '#2C2018',
     margin: '0 0 12px',
@@ -371,7 +384,7 @@ const styles = {
   clearAllBtn: {
     background: 'none',
     border: 'none',
-    color: '#C4845A',
+    color: '#7F77DD',
     fontSize: 12,
     cursor: 'pointer',
     padding: '4px 6px',
