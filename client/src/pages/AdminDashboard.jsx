@@ -8,7 +8,7 @@ async function fetchStats() {
   const [perfumes, brands, users, ratings] = await Promise.all([
     supabase.from('perfumes').select('perfume_id', { count: 'exact', head: true }),
     supabase.from('brands').select('brand_id', { count: 'exact', head: true }),
-    supabase.from('profiles').select('user_id', { count: 'exact', head: true }),
+    supabase.from('profiles').select('*', { count: 'exact', head: true }),
     supabase.from('user_ratings').select('user_id', { count: 'exact', head: true }),
   ])
   return {
