@@ -1,5 +1,8 @@
 # RedolenceDB
+
 A community-driven fragrance catalogue and collection tracker. Browse perfumes, rate and review them, track your collection, get personalised recommendations, and discover layering combinations.
+
+Vercel deployed site: https://redolence-db.vercel.app/
 
 ---
 
